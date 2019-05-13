@@ -23,14 +23,14 @@ private:
       exit(EXIT_FAILURE);
     }
   }
-  void checkGLProgramError(GLuint shaderProgramId_) {
+  void checkGLProgramError(GLuint programId_) {
     GLint status;
-    glGetProgramiv(shaderProgramId_, GL_LINK_STATUS, &status);
+    glGetProgramiv(programId_, GL_LINK_STATUS, &status);
     if (status != GL_TRUE) {
       printf("program didn't link successfully");
 
       char buffer[512];
-      glGetShaderInfoLog(shaderProgramId_, 512, nullptr, buffer);
+      glGetShaderInfoLog(programId_, 512, nullptr, buffer);
       printf("%s\n", buffer);
 
       exit(EXIT_FAILURE);
@@ -39,7 +39,7 @@ private:
 
 public:
   // The program id
-  GLuint shaderProgramId;
+  GLuint programId;
 
   Shader(const GLchar *vertexPath, const GLchar *fragmentPath) {
     std::string vertexCode, fragmentCode;
@@ -81,12 +81,12 @@ public:
     checkGLShaderError(fragmentShaderId);
 
     // Create a _program_ from this two shaders
-    shaderProgramId = glCreateProgram();
-    glAttachShader(shaderProgramId, vertexShaderId);
-    glAttachShader(shaderProgramId, fragmentShaderId);
-    glBindFragDataLocation(shaderProgramId, 0, "outColor");
-    glLinkProgram(shaderProgramId);
-    checkGLProgramError(shaderProgramId);
+    programId = glCreateProgram();
+    glAttachShader(programId, vertexShaderId);
+    glAttachShader(programId, fragmentShaderId);
+    glBindFragDataLocation(programId, 0, "out_Color");
+    glLinkProgram(programId);
+    checkGLProgramError(programId);
 
     // Delete the shader objects now that the program is linked
     glDeleteShader(vertexShaderId);
@@ -94,19 +94,7 @@ public:
   }
 
   // Use/activate the shader
-  void use() { glUseProgram(shaderProgramId); }
-
-  // Utility uniform functions
-  void setBool(const std::string &name, bool value) const {
-    glUniform1i(glGetUniformLocation(shaderProgramId, name.c_str()),
-                static_cast<int>(value));
-  }
-  void setInt(const std::string &name, int value) const {
-    glUniform1i(glGetUniformLocation(shaderProgramId, name.c_str()), value);
-  }
-  void setFloat(const std::string &name, float value) const {
-    glUniform1f(glGetUniformLocation(shaderProgramId, name.c_str()), value);
-  }
+  void use() { glUseProgram(programId); }
 };
 
 #endif
