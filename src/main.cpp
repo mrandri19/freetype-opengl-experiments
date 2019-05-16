@@ -16,6 +16,7 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_LCD_FILTER_H
 
 void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
                             GLenum severity, GLsizei length, const GLchar *msg,
@@ -127,6 +128,9 @@ static const int FONT_ZOOM = 8;
 // Comparing with 16px Visual Studio Code
 static const int FONT_PIXEL_SIZE = 16 + 1;
 
+#define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
+#define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
+
 static const char *WINDOW_TITLE = "OpenGL";
 
 GLuint VAO, VBO;
@@ -235,6 +239,12 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
+  FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_LEGACY);
+
+  FT_Int maj, min, patch;
+  FT_Library_Version(ft, &maj, &min, &patch);
+  printf("FreeType version: %d.%d.%d\n", maj, min, patch);
+
   // Load the face
   FT_Face face;
   if (FT_New_Face(ft, "UbuntuMono.ttf", 0, &face)) {
@@ -285,7 +295,6 @@ int main() {
         }
       }
 
-      // FIXME: WHY THE FUCK IS THIS SHIFTED BY 1PX?
       if (c == 'r') {
         // Print the bitmap buffer
         printf("character: %c\n", c);
@@ -392,22 +401,20 @@ int main() {
       processInput(window);
 
       // Clear the colorbuffer
-      // glClearColor(29. / 255, 31. / 255, 33. / 255, 1.0f);
-      glClearColor(1.0, 1.0, 1.0, 1.0f);
+      glClearColor(BACKGROUND_COLOR);
+      // glClearColor(1.0, 1.0, 1.0, 1.0f);
       glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
       // Draw
-      // TODO: subpixel antialiasing, I still dont understand the colors
       // TODO: kerning
       // TODO: harfbuzz
       // TODO: glyph cache/atlas
       // TODO: vedere schede ipad (skribo, atlas.swift)
-
-      glm::vec4 fg_color(203. / 255, 206. / 255, 133. / 255, 1.0f);
+      glm::vec4 fg_color(FOREGROUND_COLOR);
       glUniform4fv(glGetUniformLocation(shader.programId, "fg_color"), 1,
                    glm::value_ptr(fg_color));
 
-      glm::vec4 bg_color(35. / 255, 35. / 255, 35. / 255, 1.0f);
+      glm::vec4 bg_color(BACKGROUND_COLOR);
       glUniform4fv(glGetUniformLocation(shader.programId, "bg_color"), 1,
                    glm::value_ptr(bg_color));
 
