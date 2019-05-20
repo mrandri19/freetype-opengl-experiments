@@ -1,9 +1,9 @@
-#version 400
+#version 330
 
 in vec4 in_vertex;
 
 uniform mat4 projection;
-uniform vec3 bg_color;
+uniform vec4 bg_color;
 
 out vec2 ex_texCoords;
 

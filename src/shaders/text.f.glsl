@@ -1,7 +1,7 @@
-#version 400
+#version 330
 
 in vec2 ex_texCoords;
-out vec4 gl_FragColor;
+out vec4 out_color;
 
 uniform sampler2D glyph_texture;
 
@@ -25,5 +25,5 @@ void main()
 
     float brightness = 1;
 
-    gl_FragColor = pow(vec4(r,g,b,brightness), gamma);
+    out_color = pow(vec4(r,g,b,brightness), gamma);
 }
