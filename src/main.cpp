@@ -149,9 +149,75 @@ struct character {
   glm::ivec2 bearing;
   GLuint advance;
 };
-std::map<GLchar, character> characters;
 
-void renderGlyph(FT_Face face, std::string text) {
+void renderCodepoint(FT_Face face,
+                     std::map<hb_codepoint_t, character> &glyph_index_texures,
+                     hb_codepoint_t glyph_index) {
+  using std::cout;
+  using std::endl;
+  using std::pair;
+
+  // Load the glyph
+  if (FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT)) {
+    cout << "Could not glyph index " << glyph_index << endl;
+    exit(EXIT_FAILURE);
+  }
+
+  // Render the glyph (antialiased) into a RGB alpha map
+  FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD);
+
+  GLuint texture;
+  {
+    // Generate the texture
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    unsigned char *bitmap_buffer = (unsigned char *)malloc(
+        face->glyph->bitmap.rows * face->glyph->bitmap.width);
+
+    // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
+    // matrix which is rows * width. For each row i, buffer[i][pitch] is just
+    // a padding byte, therefore we can ignore it
+    for (int i = 0; i < face->glyph->bitmap.rows; i++) {
+      for (int j = 0; j < face->glyph->bitmap.width; j++) {
+        unsigned char ch =
+            face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
+        bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
+      }
+    }
+
+    GLsizei texure_width = face->glyph->bitmap.width / 3;
+
+    // Load data
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texure_width,
+                 face->glyph->bitmap.rows, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                 bitmap_buffer);
+
+    free(bitmap_buffer);
+
+    // Set texture wrapping options
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+    // Set linear filtering for minifying and magnifying
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    character ch = {.textureID = texture,
+                    .size = glm::ivec2(texure_width, face->glyph->bitmap.rows),
+                    .bearing = glm::ivec2(face->glyph->bitmap_left,
+                                          face->glyph->bitmap_top),
+                    .advance = static_cast<GLuint>(face->glyph->advance.x)};
+    glyph_index_texures.insert(
+        std::pair<hb_codepoint_t, character>(glyph_index, ch));
+  }
+}
+
+void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
+                GLfloat scale,
+                std::map<hb_codepoint_t, character> &glyph_index_texures) {
   // Create the harfbuzz buffer
   hb_buffer_t *buf = hb_buffer_create();
 
@@ -186,38 +252,28 @@ void renderGlyph(FT_Face face, std::string text) {
   hb_glyph_position_t *glyph_pos =
       hb_buffer_get_glyph_positions(buf, &glyph_count);
 
-  printf("Printing font info\n");
-  for (size_t i = 0; i < glyph_count; i++) {
-    hb_codepoint_t glyphid = glyph_info[i].codepoint;
-    hb_position_t x_offset = glyph_pos[i].x_offset >> 6;
-    hb_position_t y_offset = glyph_pos[i].y_offset >> 6;
-    hb_position_t x_advance = glyph_pos[i].x_advance >> 6;
-    hb_position_t y_advance = glyph_pos[i].y_advance >> 6;
-
-    printf("%c %4u %d %d %d %d %u\n", text[i], glyphid, x_offset, y_offset,
-           x_advance, y_advance, FT_Get_Char_Index(face, text[i]));
-  }
-
-  // TODO: remove allocations out of rendering path
-  hb_buffer_destroy(buf);
-  hb_font_destroy(font);
-
-  free(features);
-}
-
-void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
-                GLfloat scale) {
-
   // Activate the texture unit
   glActiveTexture(GL_TEXTURE0);
 
   // Bind the vertex array object since we'll be using it in the loop
   glBindVertexArray(VAO);
 
-  // TODO: use HarfBuzz here
-  for (size_t i = 0; i < text.size(); i++) {
-    const char c = text.at(i);
-    character ch = characters[c];
+  printf("Printing font info and rendering, complete string: %s\n",
+         text.c_str());
+  for (size_t i = 0; i < glyph_count; i++) {
+    hb_codepoint_t codepoint = glyph_info[i].codepoint;
+    hb_position_t x_offset = glyph_pos[i].x_offset >> 6;
+    hb_position_t y_offset = glyph_pos[i].y_offset >> 6;
+    hb_position_t x_advance = glyph_pos[i].x_advance >> 6;
+    hb_position_t y_advance = glyph_pos[i].y_advance >> 6;
+
+    printf("%c %4u %d %d %d %d %u\n", text[i], codepoint, x_offset, y_offset,
+           x_advance, y_advance, FT_Get_Char_Index(face, text[i]));
+
+    if (glyph_index_texures.find(codepoint) == glyph_index_texures.end()) {
+      renderCodepoint(face, glyph_index_texures, codepoint);
+    }
+    character ch = glyph_index_texures.at(codepoint);
 
     GLfloat xpos = x + ch.bearing.x * scale;
     GLfloat ypos = y - (ch.size.y - ch.bearing.y) * scale;
@@ -261,8 +317,10 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
 
     // Now advance cursors for next glyph (note that advance is number of 1/64
     // pixels)
-    x += (ch.advance / 64) * scale;
+    x += (ch.advance >> 6) * scale;
   }
+
+  // Unbind VAO and texture
   glBindVertexArray(0);
   glBindTexture(GL_TEXTURE_2D, 0);
 }
@@ -355,67 +413,13 @@ int main() {
   // Disable byte-alignment restriction
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-  // render the first [32,128] chars and save the textures in the Characters map
+  std::map<hb_codepoint_t, character> glyph_index_texures;
+
+  // render the first [32,128] chars and save the textures in the
+  // glyph_index_texures map
   for (GLubyte c = 32; c < 128; c++) {
-    // Get the character's glyph index
-    FT_UInt glyph_index = FT_Get_Char_Index(face, c);
-
-    // Load the glyph
-    if (FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT)) {
-      cout << "Could not load character " << c << endl;
-      exit(EXIT_FAILURE);
-    }
-
-    // Render the glyph (antialiased) into a RGB alpha map
-    FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD);
-
-    GLuint texture;
-    {
-      // Generate the texture
-      glGenTextures(1, &texture);
-      glBindTexture(GL_TEXTURE_2D, texture);
-
-      unsigned char *bitmap_buffer = (unsigned char *)malloc(
-          face->glyph->bitmap.rows * face->glyph->bitmap.width);
-
-      // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
-      // matrix which is rows * width. For each row i, buffer[i][pitch] is just
-      // a padding byte, therefore we can ignore it
-      for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-        for (int j = 0; j < face->glyph->bitmap.width; j++) {
-          unsigned char ch =
-              face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
-          bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
-        }
-      }
-
-      GLsizei texure_width = face->glyph->bitmap.width / 3;
-
-      // Load data
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texure_width,
-                   face->glyph->bitmap.rows, 0, GL_RGB, GL_UNSIGNED_BYTE,
-                   bitmap_buffer);
-
-      free(bitmap_buffer);
-
-      // Set texture wrapping options
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
-      // Set linear filtering for minifying and magnifying
-      // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-      // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-      character ch = {
-          .textureID = texture,
-          .size = glm::ivec2(texure_width, face->glyph->bitmap.rows),
-          .bearing =
-              glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
-          .advance = static_cast<GLuint>(face->glyph->advance.x)};
-      characters.insert(pair<GLchar, character>(c, ch));
-    }
+    FT_Get_Char_Index(face, c);
+    renderCodepoint(face, glyph_index_texures, FT_Get_Char_Index(face, c));
   }
 
   // Init Vertex Array Object (VAO)
@@ -478,7 +482,8 @@ int main() {
       glUniform4fv(glGetUniformLocation(shader.programId, "fg_color_sRGB"), 1,
                    glm::value_ptr(fg_color));
 
-      renderText(face, shader, "aArenffi->&& &", 0, 184, FONT_ZOOM);
+      renderText(face, shader, "<=< I HAS LIGATURES >=>", 0, 184, FONT_ZOOM,
+                 glyph_index_texures);
 
       // Bind what we actually need to use
       glBindVertexArray(VAO);
