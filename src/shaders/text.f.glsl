@@ -1,29 +1,23 @@
 #version 400
 
 in vec2 ex_texCoords;
-out vec4 gl_FragColor;
 
 uniform sampler2D glyph_texture;
+uniform vec4 fg_color_sRGB;
 
-uniform vec4 fg_color;
-uniform vec4 bg_color;
+// Dual source blending
+// https://www.khronos.org/opengl/wiki/Blending#Dual_Source_Blending
+// https://www.khronos.org/registry/OpenGL/extensions/ARB/ARB_blend_func_extended.txt
+// Since OpenGL 3.3
+layout(location = 0, index = 0) out vec4 color;
+layout(location = 0, index = 1) out vec4 colorMask;
 
-const float GAMMA = 1.43f;
-const vec4 gamma = vec4(GAMMA, GAMMA, GAMMA, GAMMA);
-const vec4 inv_gamma = 1.0f/gamma;
-
+// https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
+// TODO: understand WHY it works, and if this is an actual solution, then write a blog post
 void main()
 {
     vec4 alpha_map = texture(glyph_texture, ex_texCoords.xy);
 
-    vec4 fg_color_linear = pow(fg_color, inv_gamma);
-    vec4 bg_color_linear = pow(bg_color, inv_gamma);
-
-    float r = alpha_map.r * fg_color_linear.r + (1.0 - alpha_map.r) * bg_color_linear.r;
-    float g = alpha_map.g * fg_color_linear.g + (1.0 - alpha_map.g) * bg_color_linear.g;
-    float b = alpha_map.b * fg_color_linear.b + (1.0 - alpha_map.b) * bg_color_linear.b;
-
-    float brightness = 1;
-
-    gl_FragColor = pow(vec4(r,g,b,brightness), gamma);
+    color = fg_color_sRGB;
+    colorMask = fg_color_sRGB.a*alpha_map;
 }

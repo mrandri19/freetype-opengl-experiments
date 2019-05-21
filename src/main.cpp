@@ -14,9 +14,15 @@
 // Shader abstraction
 #include "shader.hpp"
 
+// Freetype
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_LCD_FILTER_H
+
+// HarfBuzz
+#include <harfbuzz/hb.h>
+// HarfBuzz freetype
+#include <harfbuzz/hb-ft.h>
 
 void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
                             GLenum severity, GLsizei length, const GLchar *msg,
@@ -122,11 +128,13 @@ void processInput(GLFWwindow *window) {
   }
 }
 
-static const int WINDOW_WIDTH = 640;
-static const int WINDOW_HEIGHT = 480;
-static const int FONT_ZOOM = 8;
+static const int WINDOW_WIDTH = 1000;
+static const int WINDOW_HEIGHT = 300;
+static const int FONT_ZOOM = 1;
+
 // Comparing with 16px Visual Studio Code
-static const int FONT_PIXEL_SIZE = 16 + 1;
+static const int FONT_PIXEL_HEIGHT = 16;
+static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT;
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
@@ -135,23 +143,81 @@ static const char *WINDOW_TITLE = "OpenGL";
 
 GLuint VAO, VBO;
 
-struct Character {
+struct character {
   GLuint textureID;
   glm::ivec2 size;
   glm::ivec2 bearing;
   GLuint advance;
 };
-std::map<GLchar, Character> Characters;
+std::map<GLchar, character> characters;
 
-void renderText(Shader &s, std::string text, GLfloat x, GLfloat y,
+void renderGlyph(FT_Face face, std::string text) {
+  // Create the harfbuzz buffer
+  hb_buffer_t *buf = hb_buffer_create();
+
+  // TODO: understand which shaping mode we are using
+  // The default shaping model handles all non-complex scripts, and may also be
+  // used as a fallback for handling unrecognized scripts.
+
+  // Put the text in the buffer
+  hb_buffer_add_utf8(buf, text.c_str(), -1, 0, -1);
+
+  // Set the script, language and direction of the buffer
+  hb_buffer_set_direction(buf, HB_DIRECTION_LTR);
+  hb_buffer_set_script(buf, HB_SCRIPT_LATIN);
+  hb_buffer_set_language(buf, hb_language_from_string("en", -1));
+  hb_buffer_guess_segment_properties(buf);
+
+  // Create a font using the face provided by freetype
+  hb_font_t *font = hb_ft_font_create(face, NULL);
+
+  hb_feature_t *features = (hb_feature_t *)calloc(sizeof(hb_feature_t), 3);
+  assert(hb_feature_from_string("kern=1", -1, &features[0]));
+  assert(hb_feature_from_string("liga=1", -1, &features[1]));
+  assert(hb_feature_from_string("clig=1", -1, &features[2]));
+
+  // Shape the font
+  hb_shape(font, buf, &features[0], 3);
+
+  unsigned int glyph_count = text.size();
+
+  // Get the glyph and position information
+  hb_glyph_info_t *glyph_info = hb_buffer_get_glyph_infos(buf, &glyph_count);
+  hb_glyph_position_t *glyph_pos =
+      hb_buffer_get_glyph_positions(buf, &glyph_count);
+
+  printf("Printing font info\n");
+  for (size_t i = 0; i < glyph_count; i++) {
+    hb_codepoint_t glyphid = glyph_info[i].codepoint;
+    hb_position_t x_offset = glyph_pos[i].x_offset >> 6;
+    hb_position_t y_offset = glyph_pos[i].y_offset >> 6;
+    hb_position_t x_advance = glyph_pos[i].x_advance >> 6;
+    hb_position_t y_advance = glyph_pos[i].y_advance >> 6;
+
+    printf("%c %4u %d %d %d %d %u\n", text[i], glyphid, x_offset, y_offset,
+           x_advance, y_advance, FT_Get_Char_Index(face, text[i]));
+  }
+
+  // TODO: remove allocations out of rendering path
+  hb_buffer_destroy(buf);
+  hb_font_destroy(font);
+
+  free(features);
+}
+
+void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
                 GLfloat scale) {
+
   // Activate the texture unit
   glActiveTexture(GL_TEXTURE0);
 
+  // Bind the vertex array object since we'll be using it in the loop
   glBindVertexArray(VAO);
 
-  for (const char c : text) {
-    Character ch = Characters[c];
+  // TODO: use HarfBuzz here
+  for (size_t i = 0; i < text.size(); i++) {
+    const char c = text.at(i);
+    character ch = characters[c];
 
     GLfloat xpos = x + ch.bearing.x * scale;
     GLfloat ypos = y - (ch.size.y - ch.bearing.y) * scale;
@@ -160,12 +226,27 @@ void renderText(Shader &s, std::string text, GLfloat x, GLfloat y,
     GLfloat h = ch.size.y * scale;
 
     // Update VBO for each character
-    GLfloat vertices[6][4] = {
-        {xpos, ypos + h, 0.0, 0.0},    {xpos, ypos, 0.0, 1.0},
-        {xpos + w, ypos, 1.0, 1.0},
+    GLfloat vertices[6][4] = {/*
+                                a
+                                |
+                                |
+                                |
+                                c--------b
+                              */
+                              {xpos, ypos + h, 0.0, 0.0},
+                              {xpos, ypos, 0.0, 1.0},
+                              {xpos + w, ypos, 1.0, 1.0},
 
-        {xpos, ypos + h, 0.0, 0.0},    {xpos + w, ypos, 1.0, 1.0},
-        {xpos + w, ypos + h, 1.0, 0.0}};
+                              /*
+                                d--------f
+                                         |
+                                         |
+                                         |
+                                         e
+                              */
+                              {xpos, ypos + h, 0.0, 0.0},
+                              {xpos + w, ypos, 1.0, 1.0},
+                              {xpos + w, ypos + h, 1.0, 0.0}};
 
     // Bind the character's texure
     glBindTexture(GL_TEXTURE_2D, ch.textureID);
@@ -186,6 +267,10 @@ void renderText(Shader &s, std::string text, GLfloat x, GLfloat y,
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
+  // glViewport(0, 0, width, height);
+}
+
 int main() {
   using std::cout;
   using std::endl;
@@ -200,12 +285,11 @@ int main() {
   // We want a context that only supports the new core functionality
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-  // Unresizable window
-  glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
-
   // Create a windowed window
   GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
                                         WINDOW_TITLE, nullptr, nullptr);
+
+  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
   // Make the current context active
   glfwMakeContextCurrent(window);
@@ -219,6 +303,12 @@ int main() {
   // Enable debug output
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(GLDebugMessageCallback, nullptr);
+
+  // https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
+  // TODO: understand WHY it works, and if this is an actual solution, then
+  // write a blog post
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_COLOR);
 
   // Set the viewport
   glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -239,21 +329,25 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_LEGACY);
+  // Set which filter to use for the LCD Subpixel Antialiasing
+  FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_DEFAULT);
 
-  FT_Int maj, min, patch;
-  FT_Library_Version(ft, &maj, &min, &patch);
-  printf("FreeType version: %d.%d.%d\n", maj, min, patch);
+  {
+    FT_Int maj, min, patch;
+    FT_Library_Version(ft, &maj, &min, &patch);
+    printf("FreeType version: %d.%d.%d\n", maj, min, patch);
+  }
 
   // Load the face
   FT_Face face;
-  if (FT_New_Face(ft, "UbuntuMono.ttf", 0, &face)) {
+  if (FT_New_Face(ft, "./FiraCode-Retina.ttf", 0, &face)) {
     cout << "Could not load font" << endl;
     exit(EXIT_FAILURE);
   }
 
-  // Request the size of the face. 0, 16 means same as other
-  if (FT_Set_Pixel_Sizes(face, 0, FONT_PIXEL_SIZE)) {
+  // Request the size of the face.
+  // TODO: this
+  if (FT_Set_Pixel_Sizes(face, FONT_PIXEL_WIDTH, FONT_PIXEL_HEIGHT)) {
     cout << "Could not request the font size (in pixels)" << endl;
     exit(EXIT_FAILURE);
   }
@@ -272,7 +366,7 @@ int main() {
       exit(EXIT_FAILURE);
     }
 
-    // Render the glyph (antialiased) into a 256 grayscale pixmap
+    // Render the glyph (antialiased) into a RGB alpha map
     FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD);
 
     GLuint texture;
@@ -295,29 +389,6 @@ int main() {
         }
       }
 
-      if (c == 'r') {
-        // Print the bitmap buffer
-        printf("character: %c\n", c);
-        for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-          for (int j = 0; j < face->glyph->bitmap.width; j++) {
-            unsigned char ch =
-                face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
-            ch != 0 ? printf("%3u ", ch) : printf("  . ");
-          }
-          printf("\n");
-        }
-        printf("\n");
-
-        for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-          for (int j = 0; j < face->glyph->bitmap.width; j++) {
-            unsigned char ch = bitmap_buffer[i * face->glyph->bitmap.width + j];
-            ch != 0 ? printf("%3u ", ch) : printf("  . ");
-          }
-          printf("\n");
-        }
-        printf("\n");
-      }
-
       GLsizei texure_width = face->glyph->bitmap.width / 3;
 
       // Load data
@@ -337,23 +408,15 @@ int main() {
       // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-      Character character = {
+      character ch = {
           .textureID = texture,
           .size = glm::ivec2(texure_width, face->glyph->bitmap.rows),
           .bearing =
               glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
           .advance = static_cast<GLuint>(face->glyph->advance.x)};
-      Characters.insert(pair<GLchar, Character>(c, character));
+      characters.insert(pair<GLchar, character>(c, ch));
     }
   }
-
-  // Free the face
-  FT_Done_Face(face);
-  // Free freetype library
-  FT_Done_FreeType(ft);
-
-  // Enable blending (transparency)
-  // glEnable(GL_BLEND);
 
   // Init Vertex Array Object (VAO)
   {
@@ -397,28 +460,25 @@ int main() {
       }
 
       // Retrieve the window events
-      glfwPollEvents();
+      glfwWaitEvents();
       processInput(window);
 
-      // Clear the colorbuffer
+      // Set the background color
       glClearColor(BACKGROUND_COLOR);
-      // glClearColor(1.0, 1.0, 1.0, 1.0f);
-      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+      // Clear the colorbuffer
+      glClear(GL_COLOR_BUFFER_BIT);
 
       // Draw
-      // TODO: kerning
-      // TODO: harfbuzz
+      // TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
+      // TODO: harfbuzz (shaping & kerning)
       // TODO: glyph cache/atlas
       // TODO: vedere schede ipad (skribo, atlas.swift)
+
       glm::vec4 fg_color(FOREGROUND_COLOR);
-      glUniform4fv(glGetUniformLocation(shader.programId, "fg_color"), 1,
+      glUniform4fv(glGetUniformLocation(shader.programId, "fg_color_sRGB"), 1,
                    glm::value_ptr(fg_color));
 
-      glm::vec4 bg_color(BACKGROUND_COLOR);
-      glUniform4fv(glGetUniformLocation(shader.programId, "bg_color"), 1,
-                   glm::value_ptr(bg_color));
-
-      renderText(shader, "renderText", 0, 0, FONT_ZOOM);
+      renderText(face, shader, "aArenffi->&& &", 0, 184, FONT_ZOOM);
 
       // Bind what we actually need to use
       glBindVertexArray(VAO);
@@ -428,6 +488,11 @@ int main() {
       limiterLastTime = limiterCurrentTime;
     }
   }
+
+  // Free the face
+  FT_Done_Face(face);
+  // Free freetype library
+  FT_Done_FreeType(ft);
 
   // Terminate GLFW
   glfwTerminate();
