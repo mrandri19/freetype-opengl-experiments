@@ -1,6 +1,7 @@
 #ifndef UTIL_H
 #define UTIL_H
 #include <glad/glad.h>
+
 void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
                             GLenum severity, GLsizei length, const GLchar *msg,
                             const void *data) {
@@ -97,4 +98,5 @@ void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
   printf("%d: %s of %s severity, raised from %s: %s\n", id, _type, _severity,
          _source, msg);
 }
+
 #endif
