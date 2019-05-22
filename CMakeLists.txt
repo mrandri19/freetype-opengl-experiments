@@ -4,6 +4,7 @@ project(opengl VERSION 0.1.0)
 find_library(glfw3 REQUIRED)
 find_library(freetype2 REQUIRED)
 find_library(libpng16 REQUIRED)
+find_library(harfbuzz REQUIRED)
 
 include_directories(/usr/include/freetype2)
 include_directories(/usr/include/libpng16)
@@ -15,7 +16,7 @@ add_executable(opengl
 )
 
 target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Werror)
-target_link_libraries(opengl glfw3 X11 dl freetype pthread)
+target_link_libraries(opengl glfw3 X11 dl freetype pthread harfbuzz)
 
 add_custom_target(run
     COMMAND ./build/opengl
