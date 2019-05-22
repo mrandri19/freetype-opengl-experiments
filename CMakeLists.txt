@@ -15,5 +15,11 @@ add_executable(opengl
   lib/glad/src/glad.c
 )
 
-target_compile_options(opengl PUBLIC -Wno-writable-strings -Werror)
-target_link_libraries(opengl glfw dl freetype harfbuzz)
+target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Werror)
+target_link_libraries(opengl glfw3 X11 dl freetype pthread harfbuzz)
+
+add_custom_target(run
+    COMMAND ./build/opengl
+    DEPENDS opengl
+    WORKING_DIRECTORY ../${CMAKE_PROJECT_DIR}
+)

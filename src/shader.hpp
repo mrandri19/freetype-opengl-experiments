@@ -9,12 +9,12 @@
 #include <string>
 
 class Shader {
-private:
+ private:
   void checkGLShaderError(GLuint shaderId) {
     GLint status;
     glGetShaderiv(shaderId, GL_COMPILE_STATUS, &status);
     if (status != GL_TRUE) {
-      printf("shader didn't compile successfully");
+      printf("shader didn't compile successfully\n");
 
       char buffer[512];
       glGetShaderInfoLog(shaderId, 512, nullptr, buffer);
@@ -27,17 +27,17 @@ private:
     GLint status;
     glGetProgramiv(programId_, GL_LINK_STATUS, &status);
     if (status != GL_TRUE) {
-      printf("program didn't link successfully");
+      printf("program didn't link successfully\n");
 
       char buffer[512];
-      glGetShaderInfoLog(programId_, 512, nullptr, buffer);
+      glGetProgramInfoLog(programId_, 512, nullptr, buffer);
       printf("%s\n", buffer);
 
       exit(EXIT_FAILURE);
     }
   }
 
-public:
+ public:
   // The program id
   GLuint programId;
 
@@ -84,7 +84,6 @@ public:
     programId = glCreateProgram();
     glAttachShader(programId, vertexShaderId);
     glAttachShader(programId, fragmentShaderId);
-    glBindFragDataLocation(programId, 0, "out_Color");
     glLinkProgram(programId);
     checkGLProgramError(programId);
 
