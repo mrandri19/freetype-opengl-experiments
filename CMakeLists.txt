@@ -16,3 +16,9 @@ add_executable(opengl
 
 target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Werror)
 target_link_libraries(opengl glfw3 X11 dl freetype pthread)
+
+add_custom_target(run
+    COMMAND ./build/opengl
+    DEPENDS opengl
+    WORKING_DIRECTORY ../${CMAKE_PROJECT_DIR}
+)

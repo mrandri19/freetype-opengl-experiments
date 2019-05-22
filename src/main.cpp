@@ -11,109 +11,14 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-// Shader abstraction
 #include "shader.hpp"
+// Shader abstraction
+
+#include "util.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_LCD_FILTER_H
-
-void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
-                            GLenum severity, GLsizei length, const GLchar *msg,
-                            const void *data) {
-  char *_source;
-  char *_type;
-  char *_severity;
-
-  switch (source) {
-  case GL_DEBUG_SOURCE_API:
-    _source = "API";
-    break;
-
-  case GL_DEBUG_SOURCE_WINDOW_SYSTEM:
-    _source = "WINDOW SYSTEM";
-    break;
-
-  case GL_DEBUG_SOURCE_SHADER_COMPILER:
-    _source = "SHADER COMPILER";
-    break;
-
-  case GL_DEBUG_SOURCE_THIRD_PARTY:
-    _source = "THIRD PARTY";
-    break;
-
-  case GL_DEBUG_SOURCE_APPLICATION:
-    _source = "APPLICATION";
-    break;
-
-  case GL_DEBUG_SOURCE_OTHER:
-    _source = "UNKNOWN";
-    break;
-
-  default:
-    _source = "UNKNOWN";
-    break;
-  }
-
-  switch (type) {
-  case GL_DEBUG_TYPE_ERROR:
-    _type = "ERROR";
-    break;
-
-  case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
-    _type = "DEPRECATED BEHAVIOR";
-    break;
-
-  case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
-    _type = "UDEFINED BEHAVIOR";
-    break;
-
-  case GL_DEBUG_TYPE_PORTABILITY:
-    _type = "PORTABILITY";
-    break;
-
-  case GL_DEBUG_TYPE_PERFORMANCE:
-    _type = "PERFORMANCE";
-    break;
-
-  case GL_DEBUG_TYPE_OTHER:
-    _type = "OTHER";
-    break;
-
-  case GL_DEBUG_TYPE_MARKER:
-    _type = "MARKER";
-    break;
-
-  default:
-    _type = "UNKNOWN";
-    break;
-  }
-
-  switch (severity) {
-  case GL_DEBUG_SEVERITY_HIGH:
-    _severity = "HIGH";
-    break;
-
-  case GL_DEBUG_SEVERITY_MEDIUM:
-    _severity = "MEDIUM";
-    break;
-
-  case GL_DEBUG_SEVERITY_LOW:
-    _severity = "LOW";
-    break;
-
-  case GL_DEBUG_SEVERITY_NOTIFICATION:
-    _severity = "NOTIFICATION";
-    break;
-
-  default:
-    _severity = "UNKNOWN";
-    break;
-  }
-
-  printf("%d: %s of %s severity, raised from %s: %s\n", id, _type, _severity,
-         _source, msg);
-}
 
 void processInput(GLFWwindow *window) {
   // Close window with ESC
@@ -124,9 +29,9 @@ void processInput(GLFWwindow *window) {
 
 static const int WINDOW_WIDTH = 640;
 static const int WINDOW_HEIGHT = 480;
-static const int FONT_ZOOM = 8;
+static const int FONT_ZOOM = 1;
 // Comparing with 16px Visual Studio Code
-static const int FONT_PIXEL_SIZE = 16 + 1;
+static const int FONT_PIXEL_SIZE = 40;
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
@@ -191,7 +96,7 @@ int main() {
   using std::endl;
   using std::pair;
 
-  glfwInit(); // Init GLFW
+  glfwInit();  // Init GLFW
 
   // Require OpenGL >= 4.0
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -295,29 +200,6 @@ int main() {
         }
       }
 
-      if (c == 'r') {
-        // Print the bitmap buffer
-        printf("character: %c\n", c);
-        for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-          for (int j = 0; j < face->glyph->bitmap.width; j++) {
-            unsigned char ch =
-                face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
-            ch != 0 ? printf("%3u ", ch) : printf("  . ");
-          }
-          printf("\n");
-        }
-        printf("\n");
-
-        for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-          for (int j = 0; j < face->glyph->bitmap.width; j++) {
-            unsigned char ch = bitmap_buffer[i * face->glyph->bitmap.width + j];
-            ch != 0 ? printf("%3u ", ch) : printf("  . ");
-          }
-          printf("\n");
-        }
-        printf("\n");
-      }
-
       GLsizei texure_width = face->glyph->bitmap.width / 3;
 
       // Load data
@@ -418,7 +300,8 @@ int main() {
       glUniform4fv(glGetUniformLocation(shader.programId, "bg_color"), 1,
                    glm::value_ptr(bg_color));
 
-      renderText(shader, "renderText", 0, 0, FONT_ZOOM);
+      auto text = "renderText";
+      renderText(shader, text, 0, 0, FONT_ZOOM);
 
       // Bind what we actually need to use
       glBindVertexArray(VAO);
