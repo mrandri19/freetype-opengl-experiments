@@ -37,7 +37,7 @@ void processInput(GLFWwindow *window) {
 
 static const int WINDOW_WIDTH = 2000;
 static const int WINDOW_HEIGHT = 600;
-static const int FONT_ZOOM = 2;
+static const int FONT_ZOOM = 4;
 
 // Comparing with 16px Visual Studio Code
 static const int FONT_PIXEL_HEIGHT = 48;
@@ -47,7 +47,9 @@ static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT;
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
 
 static const char *WINDOW_TITLE = "OpenGL";
-static const char *FONT_FACE = "./FiraCode-Retina.ttf";
+
+// static const char *FONT_FACE = "./FiraCode-Retina.ttf";
+static const char *FONT_FACE = "./NotoColorEmoji.ttf";
 
 GLuint VAO, VBO;
 
@@ -67,7 +69,7 @@ void renderCodepoint(FT_Face face,
 
   // Load the glyph
   if (FT_Load_Glyph(face, codepoint,
-                    FT_LOAD_DEFAULT | FT_LOAD_COLOR | FT_LOAD_TARGET_LCD)) {
+                    FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD | FT_LOAD_COLOR)) {
     cout << "Could not load glyph with codepoint: " << codepoint << endl;
     exit(EXIT_FAILURE);
   }
@@ -98,12 +100,26 @@ void renderCodepoint(FT_Face face,
       }
     }
 
-    GLsizei texure_width = face->glyph->bitmap.width / 3;
+    // TODO: figure this out, it seems ok
+    cout << face->glyph->bitmap.rows << endl;
+    cout << face->glyph->bitmap.width << endl;
+    // for (int i = 0; i < face->glyph->bitmap.rows; i++) {
+    //   for (int j = 0; j < face->glyph->bitmap.width; j++) {
+    //     unsigned char ch =
+    //         face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
+    //     printf("%x", ch);
+    //   }
+    //   printf("\n");
+    // }
+    // printf("\n");
+
+    // GLsizei texure_width = face->glyph->bitmap.width / 3;
+    GLsizei texture_width = face->glyph->bitmap.width;
+    GLsizei texture_height = face->glyph->bitmap.rows;
 
     // Load data
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texure_width,
-                 face->glyph->bitmap.rows, 0, GL_RGB, GL_UNSIGNED_BYTE,
-                 bitmap_buffer);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, bitmap_buffer);
 
     free(bitmap_buffer);
 
@@ -117,12 +133,11 @@ void renderCodepoint(FT_Face face,
     // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    character_t ch = {
-        .textureID = texture,
-        .size = glm::ivec2(texure_width, face->glyph->bitmap.rows),
-        .bearing =
-            glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
-        .advance = static_cast<GLuint>(face->glyph->advance.x)};
+    character_t ch = {.textureID = texture,
+                      .size = glm::ivec2(texture_width, texture_height),
+                      .bearing = glm::ivec2(face->glyph->bitmap_left,
+                                            face->glyph->bitmap_top),
+                      .advance = static_cast<GLuint>(face->glyph->advance.x)};
     codepoint_texures.insert(
         std::pair<hb_codepoint_t, character_t>(codepoint, ch));
   }
@@ -145,25 +160,30 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
   hb_buffer_set_direction(buf, HB_DIRECTION_LTR);
   hb_buffer_set_script(buf, HB_SCRIPT_LATIN);
   hb_buffer_set_language(buf, hb_language_from_string("en", -1));
-  hb_buffer_guess_segment_properties(buf);
 
   // Create a font using the face provided by freetype
-  hb_font_t *font = hb_ft_font_create(face, NULL);
+  hb_font_t *font = hb_ft_font_create(face, nullptr);
 
-  std::vector<hb_feature_t> features(3);
-  assert(hb_feature_from_string("kern=1", -1, &features[0]));
-  assert(hb_feature_from_string("liga=1", -1, &features[1]));
-  assert(hb_feature_from_string("clig=0", -1, &features[2]));
+  {
+    std::vector<hb_feature_t> features(3);
+    assert(hb_feature_from_string("kern=1", -1, &features[0]));
+    assert(hb_feature_from_string("liga=1", -1, &features[1]));
+    assert(hb_feature_from_string("clig=1", -1, &features[2]));
 
-  // Shape the font
-  hb_shape(font, buf, &features[0], features.size());
-
-  unsigned int glyph_count = text.size();
+    // Shape the font
+    // FIXME: this shapes the font: [char] -> [codepoint] but it performs
+    // substitutions based on the font loaded so how do I implement font
+    // fallback?
+    hb_shape(font, buf, &features[0], features.size());
+  }
 
   // Get the glyph and position information
-  hb_glyph_info_t *glyph_info = hb_buffer_get_glyph_infos(buf, &glyph_count);
+  unsigned int glyph_info_length, glyph_position_length;
+  hb_glyph_info_t *glyph_info =
+      hb_buffer_get_glyph_infos(buf, &glyph_info_length);
   hb_glyph_position_t *glyph_pos =
-      hb_buffer_get_glyph_positions(buf, &glyph_count);
+      hb_buffer_get_glyph_positions(buf, &glyph_position_length);
+  assert(glyph_info_length == glyph_position_length);
 
   // Activate the texture unit
   glActiveTexture(GL_TEXTURE0);
@@ -171,19 +191,22 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
   // Bind the vertex array object since we'll be using it in the loop
   glBindVertexArray(VAO);
 
-  printf("Printing font info and rendering, complete string(%d): %s\n",
-         glyph_count, text.c_str());
-  for (size_t i = 0; i < glyph_count; i++) {
+  printf("Printing font info and rendering: %s\n", text.c_str());
+  printf("codepoints: %u\n", glyph_info_length);
+  printf("(HB)codepoint, x_offset, y_offset, x_advance, y_advance\n");
+
+  for (size_t i = 0; i < glyph_info_length; i++) {
     hb_codepoint_t codepoint = glyph_info[i].codepoint;
     hb_position_t x_offset = glyph_pos[i].x_offset >> 6;
     hb_position_t y_offset = glyph_pos[i].y_offset >> 6;
     hb_position_t x_advance = glyph_pos[i].x_advance >> 6;
     hb_position_t y_advance = glyph_pos[i].y_advance >> 6;
 
-    printf("%c %4u %d %d %d %d %u\n", text[i], codepoint, x_offset, y_offset,
-           x_advance, y_advance, FT_Get_Char_Index(face, text[i]));
+    printf("%13u  %8d  %8d  %9d  %9d\n", codepoint, x_offset, y_offset,
+           x_advance, y_advance);
 
     if (glyph_index_texures.find(codepoint) == glyph_index_texures.end()) {
+      // TODO: implement font fallback using fontconfig?
       renderCodepoint(face, glyph_index_texures, codepoint);
     }
     character_t ch = glyph_index_texures.at(codepoint);
@@ -230,7 +253,7 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
 
     // Now advance cursors for next glyph (note that advance is number of 1/64
     // pixels)
-    x += (ch.advance >> 6) * scale;
+    x += x_advance * scale;
   }
 
   // Unbind VAO and texture
@@ -238,9 +261,7 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
-  // glViewport(0, 0, width, height);
-}
+void framebuffer_size_callback(GLFWwindow *window, int width, int height) {}
 
 int main() {
   using std::cout;
@@ -323,22 +344,23 @@ int main() {
     cout << "Face hasn't got color" << endl;
   }
 
-  // Request the size of the face.
-  if (FT_Set_Pixel_Sizes(face, FONT_PIXEL_WIDTH, FONT_PIXEL_HEIGHT)) {
-    cout << "Could not request the font size (in pixels)" << endl;
-    exit(EXIT_FAILURE);
-  }
+  printf("num_fixed_sizes %d\n", face->num_fixed_sizes);
+
+  // TODO: fix this issue, idk what to do
+  printf("height: %d, width: %d\n", face->available_sizes[0].height,
+         face->available_sizes[0].width);
+  FT_Select_Size(face, 0);
+
+  // Set the size of the face.
+  // if (FT_Set_Pixel_Sizes(face, FONT_PIXEL_WIDTH, FONT_PIXEL_HEIGHT)) {
+  //   cout << "Could not request the font size (in pixels)" << endl;
+  //   exit(EXIT_FAILURE);
+  // }
 
   // Disable byte-alignment restriction
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
   std::map<hb_codepoint_t, character_t> codepoint_texures;
-
-  // render the first [32,128] chars and save the textures in the
-  // glyph_index_texures map
-  for (GLubyte c = 32; c < 128; c++) {
-    renderCodepoint(face, codepoint_texures, FT_Get_Char_Index(face, c));
-  }
 
   // Init Vertex Array Object (VAO)
   {
@@ -400,8 +422,12 @@ int main() {
                    glm::value_ptr(fg_color));
 
       // TODO: support emoji and different fonts
-      renderText(face, shader, "<=<a🔥🔥a->>", 0, 100, FONT_ZOOM,
-                 codepoint_texures);
+
+      // 🔥,👍,🏽 are 4 Bytes long, the ascii chars are 1 Byte
+      std::string text = "<=<a🔥👍🏽🔥a->>";
+      cout << "main: text.size() is: " << text.size() << " bytes" << endl;
+
+      renderText(face, shader, text, 0, 100, FONT_ZOOM, codepoint_texures);
 
       // Bind what we actually need to use
       glBindVertexArray(VAO);
