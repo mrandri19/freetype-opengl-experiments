@@ -16,8 +16,9 @@ layout(location = 0, index = 1) out vec4 colorMask;
 // TODO: understand WHY it works, and if this is an actual solution, then write a blog post
 void main()
 {
-    vec4 alpha_map = texture(glyph_texture, ex_texCoords.xy);
+    vec4 alpha_map = texture(glyph_texture, ex_texCoords);
 
-    color = fg_color_sRGB;
+    color = alpha_map;
+
     colorMask = fg_color_sRGB.a*alpha_map;
 }

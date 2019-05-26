@@ -1,3 +1,6 @@
+// TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
+// TODO: support emoji and different fonts
+
 #include <map>
 #include <vector>
 
@@ -28,6 +31,12 @@
 // HarfBuzz FreeTpe
 #include <harfbuzz/hb-ft.h>
 
+namespace font_renderer {
+using std::map;
+using std::pair;
+using std::string;
+using std::vector;
+
 void processInput(GLFWwindow *window) {
   // Close window with ESC
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
@@ -35,21 +44,15 @@ void processInput(GLFWwindow *window) {
   }
 }
 
-static const int WINDOW_WIDTH = 2000;
-static const int WINDOW_HEIGHT = 600;
-static const int FONT_ZOOM = 4;
-
-// Comparing with 16px Visual Studio Code
+static const int WINDOW_WIDTH = 1600;
+static const int WINDOW_HEIGHT = 900;
+static const float FONT_ZOOM = 1.0;
 static const int FONT_PIXEL_HEIGHT = 48;
 static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT;
+static const char *WINDOW_TITLE = "OpenGL";
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
-
-static const char *WINDOW_TITLE = "OpenGL";
-
-// static const char *FONT_FACE = "./FiraCode-Retina.ttf";
-static const char *FONT_FACE = "./NotoColorEmoji.ttf";
 
 GLuint VAO, VBO;
 
@@ -60,68 +63,65 @@ struct character_t {
   GLuint advance;
 };
 
-void renderCodepoint(FT_Face face,
-                     std::map<hb_codepoint_t, character_t> &codepoint_texures,
-                     hb_codepoint_t codepoint) {
-  using std::cout;
-  using std::endl;
-  using std::pair;
+void render_codepoint_to_texture(
+    FT_Face face, map<hb_codepoint_t, character_t> &codepoint_texures,
+    hb_codepoint_t codepoint) {
 
-  // Load the glyph
-  if (FT_Load_Glyph(face, codepoint,
-                    FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD | FT_LOAD_COLOR)) {
-    cout << "Could not load glyph with codepoint: " << codepoint << endl;
+  FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
+  if (FT_HAS_COLOR(face)) {
+    flags |= FT_LOAD_COLOR;
+  }
+
+  if (FT_Load_Glyph(face, codepoint, flags)) {
+    fprintf(stderr, "Could not load glyph with codepoint: %d\n", codepoint);
     exit(EXIT_FAILURE);
   }
 
   // Render the glyph (antialiased) into a RGB alpha map
   if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD)) {
-    cout << "Could not render glyph with codepoint:  " << codepoint << endl;
+    fprintf(stderr, "Could not render glyph with codepoint: %d\n", codepoint);
     exit(EXIT_FAILURE);
   }
 
-  GLuint texture;
   {
+    // TODO: use glyph atlas
     // Generate the texture
+    GLuint texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
 
-    unsigned char *bitmap_buffer = (unsigned char *)malloc(
-        face->glyph->bitmap.rows * face->glyph->bitmap.width);
+    vector<unsigned char> bitmap_buffer(face->glyph->bitmap.rows *
+                                        face->glyph->bitmap.width);
 
-    // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
-    // matrix which is rows * width. For each row i, buffer[i][pitch] is just
-    // a padding byte, therefore we can ignore it
-    for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-      for (int j = 0; j < face->glyph->bitmap.width; j++) {
-        unsigned char ch =
-            face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
-        bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
+    if (!FT_HAS_COLOR(face)) {
+      // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
+      // matrix which is rows * width. For each row i, buffer[i][pitch] is just
+      // a padding byte, therefore we can ignore it
+      for (int i = 0; i < face->glyph->bitmap.rows; i++) {
+        for (int j = 0; j < face->glyph->bitmap.width; j++) {
+          unsigned char ch =
+              face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
+          bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
+        }
       }
     }
 
-    // TODO: figure this out, it seems ok
-    cout << face->glyph->bitmap.rows << endl;
-    cout << face->glyph->bitmap.width << endl;
-    // for (int i = 0; i < face->glyph->bitmap.rows; i++) {
-    //   for (int j = 0; j < face->glyph->bitmap.width; j++) {
-    //     unsigned char ch =
-    //         face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
-    //     printf("%x", ch);
-    //   }
-    //   printf("\n");
-    // }
-    // printf("\n");
-
-    // GLsizei texure_width = face->glyph->bitmap.width / 3;
-    GLsizei texture_width = face->glyph->bitmap.width;
+    // If the glyph is not colored then it is subpixel antialiased so the
+    // texture will have 3x the width
+    GLsizei texture_width = (FT_HAS_COLOR(face))
+                                ? face->glyph->bitmap.width
+                                : face->glyph->bitmap.width / 3;
     GLsizei texture_height = face->glyph->bitmap.rows;
 
-    // Load data
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, bitmap_buffer);
-
-    free(bitmap_buffer);
+    if (FT_HAS_COLOR(face)) {
+      // Load data (the texture format is RGBA, 4 channes but the buffer
+      // internal format is BGRA)
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
+                   GL_BGRA, GL_UNSIGNED_BYTE, face->glyph->bitmap.buffer);
+    } else {
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0,
+                   GL_RGB, GL_UNSIGNED_BYTE, &bitmap_buffer[0]);
+    }
 
     // Set texture wrapping options
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
@@ -138,52 +138,14 @@ void renderCodepoint(FT_Face face,
                       .bearing = glm::ivec2(face->glyph->bitmap_left,
                                             face->glyph->bitmap_top),
                       .advance = static_cast<GLuint>(face->glyph->advance.x)};
-    codepoint_texures.insert(
-        std::pair<hb_codepoint_t, character_t>(codepoint, ch));
+    codepoint_texures.insert({codepoint, ch});
   }
 }
 
-void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
-                GLfloat scale,
-                std::map<hb_codepoint_t, character_t> &glyph_index_texures) {
-  // Create the harfbuzz buffer
-  hb_buffer_t *buf = hb_buffer_create();
-
-  // TODO: understand which shaping mode we are using
-  // The default shaping model handles all non-complex scripts, and may also be
-  // used as a fallback for handling unrecognized scripts.
-
-  // Put the text in the buffer
-  hb_buffer_add_utf8(buf, text.c_str(), -1, 0, -1);
-
-  // Set the script, language and direction of the buffer
-  hb_buffer_set_direction(buf, HB_DIRECTION_LTR);
-  hb_buffer_set_script(buf, HB_SCRIPT_LATIN);
-  hb_buffer_set_language(buf, hb_language_from_string("en", -1));
-
-  // Create a font using the face provided by freetype
-  hb_font_t *font = hb_ft_font_create(face, nullptr);
-
-  {
-    std::vector<hb_feature_t> features(3);
-    assert(hb_feature_from_string("kern=1", -1, &features[0]));
-    assert(hb_feature_from_string("liga=1", -1, &features[1]));
-    assert(hb_feature_from_string("clig=1", -1, &features[2]));
-
-    // Shape the font
-    // FIXME: this shapes the font: [char] -> [codepoint] but it performs
-    // substitutions based on the font loaded so how do I implement font
-    // fallback?
-    hb_shape(font, buf, &features[0], features.size());
-  }
-
-  // Get the glyph and position information
-  unsigned int glyph_info_length, glyph_position_length;
-  hb_glyph_info_t *glyph_info =
-      hb_buffer_get_glyph_infos(buf, &glyph_info_length);
-  hb_glyph_position_t *glyph_pos =
-      hb_buffer_get_glyph_positions(buf, &glyph_position_length);
-  assert(glyph_info_length == glyph_position_length);
+void render_codepoints_to_screen(
+    const vector<hb_codepoint_t> &codepoints, GLfloat x, GLfloat y,
+    GLfloat scale,
+    const map<hb_codepoint_t, character_t> &glyph_index_texures) {
 
   // Activate the texture unit
   glActiveTexture(GL_TEXTURE0);
@@ -191,24 +153,13 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
   // Bind the vertex array object since we'll be using it in the loop
   glBindVertexArray(VAO);
 
-  printf("Printing font info and rendering: %s\n", text.c_str());
-  printf("codepoints: %u\n", glyph_info_length);
-  printf("(HB)codepoint, x_offset, y_offset, x_advance, y_advance\n");
-
-  for (size_t i = 0; i < glyph_info_length; i++) {
-    hb_codepoint_t codepoint = glyph_info[i].codepoint;
-    hb_position_t x_offset = glyph_pos[i].x_offset >> 6;
-    hb_position_t y_offset = glyph_pos[i].y_offset >> 6;
-    hb_position_t x_advance = glyph_pos[i].x_advance >> 6;
-    hb_position_t y_advance = glyph_pos[i].y_advance >> 6;
-
-    printf("%13u  %8d  %8d  %9d  %9d\n", codepoint, x_offset, y_offset,
-           x_advance, y_advance);
+  for (size_t i = 0; i < codepoints.size(); i++) {
+    auto codepoint = codepoints[i];
 
     if (glyph_index_texures.find(codepoint) == glyph_index_texures.end()) {
-      // TODO: implement font fallback using fontconfig?
-      renderCodepoint(face, glyph_index_texures, codepoint);
+      assert(false);
     }
+
     character_t ch = glyph_index_texures.at(codepoint);
 
     GLfloat xpos = x + ch.bearing.x * scale;
@@ -216,6 +167,10 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
 
     GLfloat w = ch.size.x * scale;
     GLfloat h = ch.size.y * scale;
+
+    printf(
+        "codepoint: %4u, xpos: %5.1f, ypos: %5.1f, w: %f, h: %f, advance: %u\n",
+        codepoint, xpos, ypos, w, h, ch.advance);
 
     // Update VBO for each character_t
     GLfloat vertices[6][4] = {/*
@@ -241,34 +196,127 @@ void renderText(FT_Face face, Shader &s, std::string text, GLfloat x, GLfloat y,
                               {xpos + w, ypos + h, 1.0, 0.0}};
 
     // Bind the character_t's texure
-    glBindTexture(GL_TEXTURE_2D, ch.textureID);
+    {
+      glBindTexture(GL_TEXTURE_2D, ch.textureID);
+      // Update content of VBO memory
+      {
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+      }
 
-    // Update content of VBO memory
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+      // Render quad
+      glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // Render quad
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // Now advance cursors for next glyph (note that advance is number of 1/64
-    // pixels)
-    x += x_advance * scale;
+      // Now advance cursors for next glyph (note that advance is number of
+      // 1 / 64 pixels)
+      // TODO: use harfbuzz glyph info instead of FreeType's
+      glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    x += (ch.advance >> 6) * scale;
   }
 
   // Unbind VAO and texture
   glBindVertexArray(0);
-  glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void framebuffer_size_callback(GLFWwindow *window, int width, int height) {}
+vector<FT_Face> load_faces(FT_Library ft, const vector<string> &face_names) {
+  vector<FT_Face> faces;
+  faces.reserve(face_names.size());
+
+  for (auto face_name : face_names) {
+    FT_Face face;
+    if (FT_New_Face(ft, face_name.c_str(), 0, &face)) {
+      fprintf(stderr, "Could not load font\n");
+      exit(EXIT_FAILURE);
+    }
+
+    // TODO: handle size selection
+    if (FT_HAS_COLOR(face)) {
+      if (FT_Select_Size(face, 0)) {
+        fprintf(stderr, "Could not request the font size (fixed)\n");
+        exit(EXIT_FAILURE);
+      }
+    } else {
+      if (FT_Set_Pixel_Sizes(face, FONT_PIXEL_WIDTH, FONT_PIXEL_HEIGHT)) {
+        fprintf(stderr, "Could not request the font size (in pixels)\n");
+        exit(EXIT_FAILURE);
+      }
+    }
+    faces.push_back(face);
+  }
+
+  return faces;
+}
+
+void assign_codepoints_faces(string text, vector<FT_Face> faces,
+                             vector<size_t> &codepoint_faces,
+                             vector<hb_codepoint_t> &codepoints) {
+  for (size_t i = 0; i < faces.size(); i++) {
+    // TODO: reuse the buffer inbetween iterations
+    // Create the harfbuzz buffer
+    hb_buffer_t *buf = hb_buffer_create();
+
+    // Put the text in the buffer
+    hb_buffer_add_utf8(buf, text.c_str(), -1, 0, -1);
+
+    // Set the script, language and direction of the buffer
+    hb_buffer_set_direction(buf, HB_DIRECTION_LTR);
+    hb_buffer_set_script(buf, HB_SCRIPT_LATIN);
+    hb_buffer_set_language(buf, hb_language_from_string("en", -1));
+
+    // Create a font using the face provided by freetype
+    FT_Face face = faces[i];
+    hb_font_t *font = hb_ft_font_create(face, nullptr);
+
+    vector<hb_feature_t> features(3);
+    assert(hb_feature_from_string("kern=1", -1, &features[0]));
+    assert(hb_feature_from_string("liga=1", -1, &features[1]));
+    assert(hb_feature_from_string("clig=1", -1, &features[2]));
+
+    // Shape the font
+    hb_shape(font, buf, &features[0], features.size());
+
+    // Get the glyph and position information
+    unsigned int glyph_info_length, glyph_position_length;
+    hb_glyph_info_t *glyph_info =
+        hb_buffer_get_glyph_infos(buf, &glyph_info_length);
+    hb_glyph_position_t *glyph_pos =
+        hb_buffer_get_glyph_positions(buf, &glyph_position_length);
+
+    assert(glyph_info_length == glyph_position_length);
+
+    // Assign a size to the vector on the first iteration, this assumes that
+    // all of the face runs will have the same lengths
+    if (i == 0) {
+      codepoints.resize(glyph_info_length);
+      codepoint_faces.resize(glyph_info_length);
+    }
+    assert(glyph_info_length == codepoint_faces.size());
+
+    // Asssign a face to each codepoint if the codepoint hasn't been assigned
+    // yet
+    for (size_t j = 0; j < glyph_info_length; j++) {
+      hb_codepoint_t codepoint = glyph_info[j].codepoint;
+      hb_position_t x_offset = glyph_pos[j].x_offset >> 6;
+      hb_position_t y_offset = glyph_pos[j].y_offset >> 6;
+      hb_position_t x_advance = glyph_pos[j].x_advance >> 6;
+      hb_position_t y_advance = glyph_pos[j].y_advance >> 6;
+
+      if (codepoint != 0 && codepoints[j] != codepoint) {
+        codepoints[j] = codepoint;
+        codepoint_faces[j] = i;
+      }
+    }
+
+    // Free the face and the buffer
+    hb_font_destroy(font);
+    hb_buffer_destroy(buf);
+  }
+}
 
 int main() {
-  using std::cout;
-  using std::endl;
-  using std::pair;
-
-  glfwInit();  // Init GLFW
+  glfwInit(); // Init GLFW
 
   // Require OpenGL >= 4.0
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -281,15 +329,13 @@ int main() {
   GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
                                         WINDOW_TITLE, nullptr, nullptr);
 
-  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-
   // Make the current context active
   glfwMakeContextCurrent(window);
 
   // Check that glad worked
   if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-    cout << "Failed to initialize OpenGL context" << endl;
-    return -1;
+    fprintf(stderr, "glad failed to load OpenGL loader\n");
+    exit(EXIT_FAILURE);
   }
 
   // Enable debug output
@@ -318,49 +364,22 @@ int main() {
   // Initialize FreeType
   FT_Library ft;
   if (FT_Init_FreeType(&ft)) {
-    cout << "Could not load freetype" << endl;
+    fprintf(stderr, "Could not load freetype\n");
     exit(EXIT_FAILURE);
+  }
+  {
+    FT_Int maj, min, patch;
+    FT_Library_Version(ft, &maj, &min, &patch);
+    fprintf(stderr, "FreeType version: %d.%d.%d\n", maj, min, patch);
   }
 
   // Set which filter to use for the LCD Subpixel Antialiasing
   FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_DEFAULT);
 
-  {
-    FT_Int maj, min, patch;
-    FT_Library_Version(ft, &maj, &min, &patch);
-    printf("FreeType version: %d.%d.%d\n", maj, min, patch);
-  }
-
-  // Load the face
-  FT_Face face;
-  if (FT_New_Face(ft, FONT_FACE, 0, &face)) {
-    cout << "Could not load font" << endl;
-    exit(EXIT_FAILURE);
-  }
-
-  if (FT_HAS_COLOR(face)) {
-    cout << "Face has color" << endl;
-  } else {
-    cout << "Face hasn't got color" << endl;
-  }
-
-  printf("num_fixed_sizes %d\n", face->num_fixed_sizes);
-
-  // TODO: fix this issue, idk what to do
-  printf("height: %d, width: %d\n", face->available_sizes[0].height,
-         face->available_sizes[0].width);
-  FT_Select_Size(face, 0);
-
-  // Set the size of the face.
-  // if (FT_Set_Pixel_Sizes(face, FONT_PIXEL_WIDTH, FONT_PIXEL_HEIGHT)) {
-  //   cout << "Could not request the font size (in pixels)" << endl;
-  //   exit(EXIT_FAILURE);
-  // }
-
   // Disable byte-alignment restriction
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-  std::map<hb_codepoint_t, character_t> codepoint_texures;
+  map<hb_codepoint_t, character_t> codepoint_texures;
 
   // Init Vertex Array Object (VAO)
   {
@@ -383,67 +402,68 @@ int main() {
     glBindVertexArray(0);
   }
 
-  double limiterLastTime = glfwGetTime();
+  // // Closed event loop
+  // while (!glfwWindowShouldClose(window)) {
+  //   // Retrieve the window events
+  //   glfwWaitEvents();
+  //   processInput(window);
+  // }
 
-  double fpsLastTime = glfwGetTime();
-  int frameCount = 0;
+  // Set the background color
+  glClearColor(BACKGROUND_COLOR);
+  // Clear the colorbuffer
+  glClear(GL_COLOR_BUFFER_BIT);
 
-  // Closed event loop
-  while (!glfwWindowShouldClose(window)) {
-    double limiterCurrentTime = glfwGetTime();
-    if (limiterCurrentTime > limiterLastTime + 1.f / 144.0) {
-      // Update the fps counter and update the title if a second has passed
-      frameCount++;
-      double fpsCurrentTime = glfwGetTime();
-      if (fpsCurrentTime - fpsLastTime >= 1.0) {
-        char fps[128];
-        sprintf(fps, "OpenGL - %d fps", frameCount);
-        glfwSetWindowTitle(window, fps);
-        frameCount = 0;
-        fpsLastTime = fpsCurrentTime;
-      }
+  // Draw
+  glm::vec4 fg_color(FOREGROUND_COLOR);
+  glUniform4fv(glGetUniformLocation(shader.programId, "fg_color_sRGB"), 1,
+               glm::value_ptr(fg_color));
 
-      // Retrieve the window events
-      glfwWaitEvents();
-      processInput(window);
+  {
+    // 💯 is 4B, rest is 1B
+    string text = "💯💯 victory royale 💯💯";
 
-      // Set the background color
-      glClearColor(BACKGROUND_COLOR);
-      // Clear the colorbuffer
-      glClear(GL_COLOR_BUFFER_BIT);
+    text = "👌👀👌 good shit gooԁ sHit👌 thats ✔ some good👌👌shit "
+           "right👌👌there👌👌👌 right✔there ✔✔if i do ƽaү so my self 💯 i say so 💯 "
+           "thats what im talking about right there right there (chorus: ʳᶦᵍʰᵗ "
+           "ᵗʰᵉʳᵉ) mMMMMᎷМ💯 👌👌 👌НO0ОଠOOOOOОଠଠOoooᵒᵒᵒᵒᵒᵒᵒᵒᵒ👌 👌👌 👌 💯 👌 👀 👀 👀 "
+           "👌👌Good shit";
 
-      // Draw
-      // TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
-      // TODO: glyph cache/atlas
-      // TODO: vedere schede ipad (skribo, atlas.swift)
+    vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+    // TODO: deallocate FT_Face inside the vector
+    vector<FT_Face> faces = load_faces(ft, face_names);
 
-      glm::vec4 fg_color(FOREGROUND_COLOR);
-      glUniform4fv(glGetUniformLocation(shader.programId, "fg_color_sRGB"), 1,
-                   glm::value_ptr(fg_color));
+    vector<size_t> codepoints_face_pair;
+    vector<hb_codepoint_t> codepoints;
+    assign_codepoints_faces(text, faces, codepoints_face_pair, codepoints);
 
-      // TODO: support emoji and different fonts
-
-      // 🔥,👍,🏽 are 4 Bytes long, the ascii chars are 1 Byte
-      std::string text = "<=<a🔥👍🏽🔥a->>";
-      cout << "main: text.size() is: " << text.size() << " bytes" << endl;
-
-      renderText(face, shader, text, 0, 100, FONT_ZOOM, codepoint_texures);
-
-      // Bind what we actually need to use
-      glBindVertexArray(VAO);
-
-      // Swap buffers when drawing is finished
-      glfwSwapBuffers(window);
-      limiterLastTime = limiterCurrentTime;
+    for (size_t i = 0; i < codepoints_face_pair.size(); i++) {
+      render_codepoint_to_texture(faces[codepoints_face_pair[i]],
+                                  codepoint_texures, codepoints[i]);
     }
+    render_codepoints_to_screen(codepoints, 0, 100, FONT_ZOOM,
+                                codepoint_texures);
   }
 
-  // Free the face
-  FT_Done_Face(face);
+  // Swap buffers when drawing is finished
+  glfwSwapBuffers(window);
+
+  while (!glfwWindowShouldClose(window)) {
+    glfwWaitEvents();
+    processInput(window);
+  }
+
   // Free freetype library
   FT_Done_FreeType(ft);
 
   // Terminate GLFW
   glfwTerminate();
+  return 0;
+}
+
+} // namespace font_renderer
+
+int main() {
+  font_renderer::main();
   return 0;
 }
