@@ -4,6 +4,7 @@ in vec2 ex_texCoords;
 
 uniform sampler2D glyph_texture;
 uniform vec4 fg_color_sRGB;
+uniform int colored;
 
 // Dual source blending
 // https://www.khronos.org/opengl/wiki/Blending#Dual_Source_Blending
@@ -18,7 +19,11 @@ void main()
 {
     vec4 alpha_map = texture(glyph_texture, ex_texCoords);
 
-    color = alpha_map;
+    if(colored==1) {
+        color = alpha_map;
+    } else {
+        color = fg_color_sRGB;
+    }
 
     colorMask = fg_color_sRGB.a*alpha_map;
 }

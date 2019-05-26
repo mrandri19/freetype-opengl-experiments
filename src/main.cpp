@@ -44,11 +44,12 @@ void processInput(GLFWwindow *window) {
   }
 }
 
-static const int WINDOW_WIDTH = 1600;
-static const int WINDOW_HEIGHT = 900;
-static const float FONT_ZOOM = 1.0;
-static const int FONT_PIXEL_HEIGHT = 48;
+static const int WINDOW_WIDTH = 800;
+static const int WINDOW_HEIGHT = 300;
+static const int FONT_PIXEL_HEIGHT = 16;
 static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT;
+static const int FONT_ZOOM = 1;
+static const int LINE_HEIGHT = 22;
 static const char *WINDOW_TITLE = "OpenGL";
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
@@ -61,6 +62,7 @@ struct character_t {
   glm::ivec2 size;
   glm::ivec2 bearing;
   GLuint advance;
+  bool colored;
 };
 
 void render_codepoint_to_texture(
@@ -108,10 +110,16 @@ void render_codepoint_to_texture(
 
     // If the glyph is not colored then it is subpixel antialiased so the
     // texture will have 3x the width
-    GLsizei texture_width = (FT_HAS_COLOR(face))
-                                ? face->glyph->bitmap.width
-                                : face->glyph->bitmap.width / 3;
-    GLsizei texture_height = face->glyph->bitmap.rows;
+    GLsizei texture_width;
+    GLsizei texture_height;
+
+    if (FT_HAS_COLOR(face)) {
+      texture_width = face->glyph->bitmap.width;
+      texture_height = face->glyph->bitmap.rows;
+    } else {
+      texture_width = face->glyph->bitmap.width / 3;
+      texture_height = face->glyph->bitmap.rows;
+    }
 
     if (FT_HAS_COLOR(face)) {
       // Load data (the texture format is RGBA, 4 channes but the buffer
@@ -128,23 +136,22 @@ void render_codepoint_to_texture(
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
     // Set linear filtering for minifying and magnifying
-    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     character_t ch = {.textureID = texture,
                       .size = glm::ivec2(texture_width, texture_height),
                       .bearing = glm::ivec2(face->glyph->bitmap_left,
                                             face->glyph->bitmap_top),
-                      .advance = static_cast<GLuint>(face->glyph->advance.x)};
+                      .advance = static_cast<GLuint>(face->glyph->advance.x),
+                      .colored = static_cast<bool> FT_HAS_COLOR(face)};
     codepoint_texures.insert({codepoint, ch});
   }
 }
 
 void render_codepoints_to_screen(
     const vector<hb_codepoint_t> &codepoints, GLfloat x, GLfloat y,
-    GLfloat scale,
+    GLfloat scale, Shader &shader,
     const map<hb_codepoint_t, character_t> &glyph_index_texures) {
 
   // Activate the texture unit
@@ -164,13 +171,23 @@ void render_codepoints_to_screen(
 
     GLfloat xpos = x + ch.bearing.x * scale;
     GLfloat ypos = y - (ch.size.y - ch.bearing.y) * scale;
+    GLuint advance = ch.advance >> 6;
 
-    GLfloat w = ch.size.x * scale;
-    GLfloat h = ch.size.y * scale;
+    GLfloat w, h;
 
-    printf(
-        "codepoint: %4u, xpos: %5.1f, ypos: %5.1f, w: %f, h: %f, advance: %u\n",
-        codepoint, xpos, ypos, w, h, ch.advance);
+    if (ch.colored) {
+      // TODO: figure how to not throw away bearing and stuff
+      w = FONT_PIXEL_WIDTH;
+      h = FONT_PIXEL_HEIGHT;
+      xpos = x;
+      ypos = y;
+      advance = w;
+      glUniform1i(glGetUniformLocation(shader.programId, "colored"), 1);
+    } else {
+      w = ch.size.x * scale;
+      h = ch.size.y * scale;
+      glUniform1i(glGetUniformLocation(shader.programId, "colored"), 0);
+    }
 
     // Update VBO for each character_t
     GLfloat vertices[6][4] = {/*
@@ -208,12 +225,12 @@ void render_codepoints_to_screen(
       // Render quad
       glDrawArrays(GL_TRIANGLES, 0, 6);
 
-      // Now advance cursors for next glyph (note that advance is number of
-      // 1 / 64 pixels)
-      // TODO: use harfbuzz glyph info instead of FreeType's
       glBindTexture(GL_TEXTURE_2D, 0);
     }
-    x += (ch.advance >> 6) * scale;
+    // Now advance cursors for next glyph (note that advance is number of
+    // 1 / 64 pixels)
+    // TODO: use harfbuzz glyph info instead of FreeType's
+    x += (advance * scale);
   }
 
   // Unbind VAO and texture
@@ -420,29 +437,33 @@ int main() {
                glm::value_ptr(fg_color));
 
   {
-    // 💯 is 4B, rest is 1B
-    string text = "💯💯 victory royale 💯💯";
+    vector<string> lines = {
+        "👌👀👌 good shit good sHit👌 thats ✔ some good👌👌shit ",
+        "right👌👌there👌👌👌 right✔there ✔✔if i do saү so my self 💯 i say so",
+        "💯 thats what im talking about right there right there",
+        "(chorus: right "
+        "there) mMMMMМ💯 👌👌",
+        "👌НO0ОOOOOOОOooo👌👌 👌 💯 👌 👀 👀 👀 "
+        "👌👌Good shit"};
 
-    text = "👌👀👌 good shit gooԁ sHit👌 thats ✔ some good👌👌shit "
-           "right👌👌there👌👌👌 right✔there ✔✔if i do ƽaү so my self 💯 i say so 💯 "
-           "thats what im talking about right there right there (chorus: ʳᶦᵍʰᵗ "
-           "ᵗʰᵉʳᵉ) mMMMMᎷМ💯 👌👌 👌НO0ОଠOOOOOОଠଠOoooᵒᵒᵒᵒᵒᵒᵒᵒᵒ👌 👌👌 👌 💯 👌 👀 👀 👀 "
-           "👌👌Good shit";
-
-    vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+    vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
     // TODO: deallocate FT_Face inside the vector
     vector<FT_Face> faces = load_faces(ft, face_names);
 
-    vector<size_t> codepoints_face_pair;
-    vector<hb_codepoint_t> codepoints;
-    assign_codepoints_faces(text, faces, codepoints_face_pair, codepoints);
+    for (size_t i = 0; i < lines.size(); i++) {
+      auto &line = lines[i];
+      vector<size_t> codepoints_face_pair;
+      vector<hb_codepoint_t> codepoints;
+      assign_codepoints_faces(line, faces, codepoints_face_pair, codepoints);
 
-    for (size_t i = 0; i < codepoints_face_pair.size(); i++) {
-      render_codepoint_to_texture(faces[codepoints_face_pair[i]],
-                                  codepoint_texures, codepoints[i]);
+      for (size_t i = 0; i < codepoints_face_pair.size(); i++) {
+        render_codepoint_to_texture(faces[codepoints_face_pair[i]],
+                                    codepoint_texures, codepoints[i]);
+      }
+      render_codepoints_to_screen(codepoints, 0,
+                                  (lines.size() - (i + 1)) * LINE_HEIGHT,
+                                  FONT_ZOOM, shader, codepoint_texures);
     }
-    render_codepoints_to_screen(codepoints, 0, 100, FONT_ZOOM,
-                                codepoint_texures);
   }
 
   // Swap buffers when drawing is finished
