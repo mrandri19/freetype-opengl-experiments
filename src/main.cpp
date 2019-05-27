@@ -44,12 +44,12 @@ void processInput(GLFWwindow *window) {
   }
 }
 
-static const int WINDOW_WIDTH = 800;
-static const int WINDOW_HEIGHT = 300;
-static const int FONT_PIXEL_HEIGHT = 16;
+static const int WINDOW_WIDTH = 1280;
+static const int WINDOW_HEIGHT = 720;
+static const int FONT_PIXEL_HEIGHT = 48;
 static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT;
 static const int FONT_ZOOM = 1;
-static const int LINE_HEIGHT = 22;
+static const int LINE_HEIGHT = static_cast<int>(FONT_PIXEL_HEIGHT * 1.35);
 static const char *WINDOW_TITLE = "OpenGL";
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
@@ -176,11 +176,14 @@ void render_codepoints_to_screen(
     GLfloat w, h;
 
     if (ch.colored) {
-      // TODO: figure how to not throw away bearing and stuff
+      GLfloat ratio_x = (GLfloat)FONT_PIXEL_WIDTH / (GLfloat)ch.size.x;
+      GLfloat ratio_y = (GLfloat)FONT_PIXEL_HEIGHT / (GLfloat)ch.size.y;
+
       w = FONT_PIXEL_WIDTH;
       h = FONT_PIXEL_HEIGHT;
-      xpos = x;
-      ypos = y;
+
+      xpos = x + ch.bearing.x * scale * ratio_x;
+      ypos = y - (ch.size.y - ch.bearing.y) * scale * ratio_y;
       advance = w;
       glUniform1i(glGetUniformLocation(shader.programId, "colored"), 1);
     } else {
