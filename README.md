@@ -1,3 +1,5 @@
+![](https://raw.githubusercontent.com/mrandri19/freetype-opengl-experiments/master/correct_gamma_blending.png)
+
 ![](https://raw.githubusercontent.com/mrandri19/freetype-opengl-experiments/master/Screenshot%20from%202019-05-19%2022-22-44.png)
 
 ## Development
