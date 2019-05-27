@@ -1,7 +1,12 @@
 // TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
-// TODO: support emoji and different fonts
+// TODO(performance): make it decent, 0.708953 to render 500 lines is pathetic
+// FIXME: crashes with too many emoji, wtf (use emojii ipsum to test it)
 
+#include <chrono>
+#include <ctime>
+#include <fstream>
 #include <map>
+#include <ratio>
 #include <vector>
 
 // glad - OpenGL loader
@@ -44,16 +49,17 @@ void processInput(GLFWwindow *window) {
   }
 }
 
-static const int WINDOW_WIDTH = 1280;
-static const int WINDOW_HEIGHT = 720;
-static const int FONT_PIXEL_HEIGHT = 48;
-static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT;
+static const int WINDOW_WIDTH = 720;
+static const int WINDOW_HEIGHT = 900;
+static const int FONT_PIXEL_HEIGHT = 17;
+static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT - 1;
 static const int FONT_ZOOM = 1;
 static const int LINE_HEIGHT = static_cast<int>(FONT_PIXEL_HEIGHT * 1.35);
 static const char *WINDOW_TITLE = "OpenGL";
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
+// #define FOREGROUND_COLOR 255. / 255, 0. / 255, 0. / 255, 1.0f
 
 GLuint VAO, VBO;
 
@@ -86,7 +92,7 @@ void render_codepoint_to_texture(
   }
 
   {
-    // TODO: use glyph atlas
+    // TODO(performance): use glyph atlas
     // Generate the texture
     GLuint texture;
     glGenTextures(1, &texture);
@@ -97,8 +103,8 @@ void render_codepoint_to_texture(
 
     if (!FT_HAS_COLOR(face)) {
       // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
-      // matrix which is rows * width. For each row i, buffer[i][pitch] is just
-      // a padding byte, therefore we can ignore it
+      // matrix which is rows * width. For each row i, buffer[i][pitch] is
+      // just a padding byte, therefore we can ignore it
       for (int i = 0; i < face->glyph->bitmap.rows; i++) {
         for (int j = 0; j < face->glyph->bitmap.width; j++) {
           unsigned char ch =
@@ -131,13 +137,16 @@ void render_codepoint_to_texture(
                    GL_RGB, GL_UNSIGNED_BYTE, &bitmap_buffer[0]);
     }
 
+    // Generate mipmaps for the texture
+    glGenerateMipmap(GL_TEXTURE_2D);
+
     // Set texture wrapping options
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
     // Set linear filtering for minifying and magnifying
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
     character_t ch = {.textureID = texture,
                       .size = glm::ivec2(texture_width, texture_height),
@@ -179,8 +188,8 @@ void render_codepoints_to_screen(
       GLfloat ratio_x = (GLfloat)FONT_PIXEL_WIDTH / (GLfloat)ch.size.x;
       GLfloat ratio_y = (GLfloat)FONT_PIXEL_HEIGHT / (GLfloat)ch.size.y;
 
-      w = FONT_PIXEL_WIDTH;
-      h = FONT_PIXEL_HEIGHT;
+      w = ch.size.x * scale * ratio_x;
+      h = ch.size.y * scale * ratio_y;
 
       xpos = x + ch.bearing.x * scale * ratio_x;
       ypos = y - (ch.size.y - ch.bearing.y) * scale * ratio_y;
@@ -251,7 +260,6 @@ vector<FT_Face> load_faces(FT_Library ft, const vector<string> &face_names) {
       exit(EXIT_FAILURE);
     }
 
-    // TODO: handle size selection
     if (FT_HAS_COLOR(face)) {
       if (FT_Select_Size(face, 0)) {
         fprintf(stderr, "Could not request the font size (fixed)\n");
@@ -273,7 +281,7 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
                              vector<size_t> &codepoint_faces,
                              vector<hb_codepoint_t> &codepoints) {
   for (size_t i = 0; i < faces.size(); i++) {
-    // TODO: reuse the buffer inbetween iterations
+    // TODO(performance): reuse the buffer inbetween iterations
     // Create the harfbuzz buffer
     hb_buffer_t *buf = hb_buffer_create();
 
@@ -306,11 +314,13 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
 
     assert(glyph_info_length == glyph_position_length);
 
-    // Assign a size to the vector on the first iteration, this assumes that
-    // all of the face runs will have the same lengths
+    // Assign a size to the vector on the first iteration and fill it with -1
+    // which represents the absence of a value
+    // This assumes that all of the face runs will have the same lengths
+    const auto MISSING = -1;
     if (i == 0) {
-      codepoints.resize(glyph_info_length);
-      codepoint_faces.resize(glyph_info_length);
+      codepoints.resize(glyph_info_length, MISSING);
+      codepoint_faces.resize(glyph_info_length, MISSING);
     }
     assert(glyph_info_length == codepoint_faces.size());
 
@@ -323,7 +333,7 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
       hb_position_t x_advance = glyph_pos[j].x_advance >> 6;
       hb_position_t y_advance = glyph_pos[j].y_advance >> 6;
 
-      if (codepoint != 0 && codepoints[j] != codepoint) {
+      if (codepoint != 0 && codepoints[j] == MISSING) {
         codepoints[j] = codepoint;
         codepoint_faces[j] = i;
       }
@@ -335,7 +345,7 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
   }
 }
 
-int main() {
+int main(int argc, char **argv) {
   glfwInit(); // Init GLFW
 
   // Require OpenGL >= 4.0
@@ -440,18 +450,21 @@ int main() {
                glm::value_ptr(fg_color));
 
   {
-    vector<string> lines = {
-        "👌👀👌 good shit good sHit👌 thats ✔ some good👌👌shit ",
-        "right👌👌there👌👌👌 right✔there ✔✔if i do saү so my self 💯 i say so",
-        "💯 thats what im talking about right there right there",
-        "(chorus: right "
-        "there) mMMMMМ💯 👌👌",
-        "👌НO0ОOOOOOОOooo👌👌 👌 💯 👌 👀 👀 👀 "
-        "👌👌Good shit"};
+    vector<string> lines;
+    {
+      std::ifstream file(argv[1]);
+      std::string line;
+      while (std::getline(file, line)) {
+        lines.push_back(line);
+      }
+    }
 
     vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
-    // TODO: deallocate FT_Face inside the vector
     vector<FT_Face> faces = load_faces(ft, face_names);
+
+    printf("Rendering lines\n");
+    using namespace std::chrono;
+    high_resolution_clock::time_point t1 = high_resolution_clock::now();
 
     for (size_t i = 0; i < lines.size(); i++) {
       auto &line = lines[i];
@@ -464,8 +477,17 @@ int main() {
                                     codepoint_texures, codepoints[i]);
       }
       render_codepoints_to_screen(codepoints, 0,
-                                  (lines.size() - (i + 1)) * LINE_HEIGHT,
+                                  WINDOW_HEIGHT - (LINE_HEIGHT * (i + 1)),
                                   FONT_ZOOM, shader, codepoint_texures);
+    }
+
+    high_resolution_clock::time_point t2 = high_resolution_clock::now();
+
+    duration<double> time_span = duration_cast<duration<double>>(t2 - t1);
+    printf("Rendering lines took %f\n", time_span.count());
+
+    for (auto face : faces) {
+      FT_Done_Face(face);
     }
   }
 
@@ -487,7 +509,11 @@ int main() {
 
 } // namespace font_renderer
 
-int main() {
-  font_renderer::main();
+int main(int argc, char **argv) {
+  if (argc != 2) {
+    printf("Usage %s FILE\n", argv[0]);
+    exit(EXIT_FAILURE);
+  }
+  font_renderer::main(argc, argv);
   return 0;
 }
