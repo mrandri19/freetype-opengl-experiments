@@ -1,5 +1,7 @@
 // TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
 // FIXME: crashes with too many emoji, wtf (use emojii ipsum to test it)
+// TODO: statically link glfw, harfbuzz; making sure that both are compiled in
+// release mode
 
 #include <chrono>
 #include <ctime>
@@ -45,26 +47,45 @@ struct state_t {
   size_t width;
   size_t height;
 
+  size_t line_height;
+
   size_t lines;
 
-  size_t start_line;
+  ssize_t start_line; // must be signed to avoid underflow when subtracting 1 to
+                      // check if we can go up
   size_t visible_lines;
 } state;
 
 void key_callback(GLFWwindow *window, int key, int scancode, int action,
                   int mods) {
   if (key == GLFW_KEY_DOWN && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-    if ((state.start_line + state.visible_lines) < state.lines) {
+    if ((state.start_line + state.visible_lines + 1) <= state.lines) {
       state.start_line++;
     }
   }
   if (key == GLFW_KEY_UP && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-    if (state.start_line > 0) {
+    if ((state.start_line - 1) >= 0) {
       state.start_line--;
     }
   }
   if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, true);
+  }
+}
+
+void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
+  int lines_to_scroll = yoffset;
+  printf("scroll callback %d\n", lines_to_scroll);
+  if (yoffset > 0) {
+    if ((lines_to_scroll + state.start_line + state.visible_lines) <=
+        state.lines) {
+      state.start_line -= lines_to_scroll;
+    }
+  } else {
+    lines_to_scroll = -lines_to_scroll;
+    if ((lines_to_scroll + state.start_line + state.visible_lines) >= 0) {
+      state.start_line += lines_to_scroll;
+    }
   }
 }
 
@@ -484,11 +505,13 @@ int main(int argc, char **argv) {
   auto time_span_ = duration_cast<duration<double>>(t2_ - t1_);
   printf("Setup took %f ms\n", time_span_.count() * 1000);
 
-  // TODO: make actual calculations
+  // TODO: handle changing viewport
   // Render only the lines visible in the viewport
   state = {
       .width = WINDOW_WIDTH,
       .height = WINDOW_HEIGHT,
+
+      .line_height = LINE_HEIGHT,
 
       .lines = lines.size(),
 
@@ -497,6 +520,7 @@ int main(int argc, char **argv) {
   };
 
   glfwSetKeyCallback(window, key_callback);
+  glfwSetScrollCallback(window, scroll_callback);
 
   while (!glfwWindowShouldClose(window)) {
 
