@@ -3,6 +3,9 @@
 // TODO: statically link glfw, harfbuzz; making sure that both are compiled in
 // release mode
 
+// 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
+// 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
+
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -75,15 +78,14 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
 
 void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
   int lines_to_scroll = yoffset;
-  printf("scroll callback %d\n", lines_to_scroll);
-  if (yoffset > 0) {
-    if ((lines_to_scroll + state.start_line + state.visible_lines) <=
-        state.lines) {
+  if (yoffset > 0) { // going up
+    if ((state.start_line - lines_to_scroll) >= 0) {
       state.start_line -= lines_to_scroll;
     }
-  } else {
+  } else { // going down
     lines_to_scroll = -lines_to_scroll;
-    if ((lines_to_scroll + state.start_line + state.visible_lines) >= 0) {
+    if ((state.start_line + state.visible_lines + lines_to_scroll) <=
+        state.lines) {
       state.start_line += lines_to_scroll;
     }
   }
@@ -153,10 +155,6 @@ void render_codepoint_to_texture(
         }
       }
     }
-
-    // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
-
-    // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
 
     // If the glyph is not colored then it is subpixel antialiased so the
     // texture will have 3x the width
