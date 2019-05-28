@@ -1,12 +1,11 @@
 // TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
-// TODO(performance): make it decent, 0.708953 to render 500 lines is pathetic
 // FIXME: crashes with too many emoji, wtf (use emojii ipsum to test it)
 
 #include <chrono>
 #include <ctime>
 #include <fstream>
-#include <map>
 #include <ratio>
+#include <unordered_map>
 #include <vector>
 
 // glad - OpenGL loader
@@ -37,15 +36,35 @@
 #include <harfbuzz/hb-ft.h>
 
 namespace font_renderer {
-using std::map;
 using std::pair;
 using std::string;
+using std::unordered_map;
 using std::vector;
 
-void processInput(GLFWwindow *window) {
-  // Close window with ESC
-  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-    glfwSetWindowShouldClose(window, GL_TRUE);
+struct state_t {
+  size_t width;
+  size_t height;
+
+  size_t lines;
+
+  size_t start_line;
+  size_t visible_lines;
+} state;
+
+void key_callback(GLFWwindow *window, int key, int scancode, int action,
+                  int mods) {
+  if (key == GLFW_KEY_DOWN && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+    if ((state.start_line + state.visible_lines) < state.lines) {
+      state.start_line++;
+    }
+  }
+  if (key == GLFW_KEY_UP && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+    if (state.start_line > 0) {
+      state.start_line--;
+    }
+  }
+  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+    glfwSetWindowShouldClose(window, true);
   }
 }
 
@@ -72,7 +91,7 @@ struct character_t {
 };
 
 void render_codepoint_to_texture(
-    FT_Face face, map<hb_codepoint_t, character_t> &codepoint_texures,
+    FT_Face face, unordered_map<hb_codepoint_t, character_t> &codepoint_texures,
     hb_codepoint_t codepoint) {
 
   FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
@@ -92,7 +111,7 @@ void render_codepoint_to_texture(
   }
 
   {
-    // TODO(performance): use glyph atlas
+    // TODO(performance): dont'use separate textures
     // Generate the texture
     GLuint texture;
     glGenTextures(1, &texture);
@@ -114,6 +133,10 @@ void render_codepoint_to_texture(
       }
     }
 
+    // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
+
+    // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
+
     // If the glyph is not colored then it is subpixel antialiased so the
     // texture will have 3x the width
     GLsizei texture_width;
@@ -132,21 +155,23 @@ void render_codepoint_to_texture(
       // internal format is BGRA)
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
                    GL_BGRA, GL_UNSIGNED_BYTE, face->glyph->bitmap.buffer);
+
+      // Generate mipmaps for the texture
+      glGenerateMipmap(GL_TEXTURE_2D);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                      GL_LINEAR_MIPMAP_LINEAR);
     } else {
       glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0,
                    GL_RGB, GL_UNSIGNED_BYTE, &bitmap_buffer[0]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     }
-
-    // Generate mipmaps for the texture
-    glGenerateMipmap(GL_TEXTURE_2D);
 
     // Set texture wrapping options
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
     // Set linear filtering for minifying and magnifying
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     character_t ch = {.textureID = texture,
                       .size = glm::ivec2(texture_width, texture_height),
@@ -161,7 +186,7 @@ void render_codepoint_to_texture(
 void render_codepoints_to_screen(
     const vector<hb_codepoint_t> &codepoints, GLfloat x, GLfloat y,
     GLfloat scale, Shader &shader,
-    const map<hb_codepoint_t, character_t> &glyph_index_texures) {
+    const unordered_map<hb_codepoint_t, character_t> &glyph_index_texures) {
 
   // Activate the texture unit
   glActiveTexture(GL_TEXTURE0);
@@ -279,14 +304,19 @@ vector<FT_Face> load_faces(FT_Library ft, const vector<string> &face_names) {
 
 void assign_codepoints_faces(string text, vector<FT_Face> faces,
                              vector<size_t> &codepoint_faces,
-                             vector<hb_codepoint_t> &codepoints) {
-  for (size_t i = 0; i < faces.size(); i++) {
-    // TODO(performance): reuse the buffer inbetween iterations
-    // Create the harfbuzz buffer
-    hb_buffer_t *buf = hb_buffer_create();
+                             vector<hb_codepoint_t> &codepoints,
+                             hb_buffer_t *buf) {
+  // Flag to break the for loop when all of the codepoints have been assigned to
+  // a face
+  bool all_codepoints_have_a_face = true;
+  for (size_t i = 0; (i < faces.size()) && all_codepoints_have_a_face; i++) {
+    all_codepoints_have_a_face = false;
+
+    // Reset the buffer, which is reused inbetween iterations
+    hb_buffer_clear_contents(buf);
 
     // Put the text in the buffer
-    hb_buffer_add_utf8(buf, text.c_str(), -1, 0, -1);
+    hb_buffer_add_utf8(buf, text.data(), text.length(), 0, -1);
 
     // Set the script, language and direction of the buffer
     hb_buffer_set_direction(buf, HB_DIRECTION_LTR);
@@ -337,15 +367,25 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
         codepoints[j] = codepoint;
         codepoint_faces[j] = i;
       }
+
+      // If we find a glyph which is not present in this face (therefore its
+      // codepoint it's 0) and which has not been assigned already then we need
+      // to iterate on the next font
+      if (codepoint == 0 && codepoints[j] == MISSING) {
+        all_codepoints_have_a_face = true;
+      }
     }
 
     // Free the face and the buffer
     hb_font_destroy(font);
-    hb_buffer_destroy(buf);
   }
 }
 
 int main(int argc, char **argv) {
+  using namespace std::chrono;
+  printf("Beginning setup\n");
+  auto t1_ = high_resolution_clock::now();
+
   glfwInit(); // Init GLFW
 
   // Require OpenGL >= 4.0
@@ -397,11 +437,6 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Could not load freetype\n");
     exit(EXIT_FAILURE);
   }
-  {
-    FT_Int maj, min, patch;
-    FT_Library_Version(ft, &maj, &min, &patch);
-    fprintf(stderr, "FreeType version: %d.%d.%d\n", maj, min, patch);
-  }
 
   // Set which filter to use for the LCD Subpixel Antialiasing
   FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_DEFAULT);
@@ -409,7 +444,7 @@ int main(int argc, char **argv) {
   // Disable byte-alignment restriction
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-  map<hb_codepoint_t, character_t> codepoint_texures;
+  unordered_map<hb_codepoint_t, character_t> codepoint_texures;
 
   // Init Vertex Array Object (VAO)
   {
@@ -432,71 +467,94 @@ int main(int argc, char **argv) {
     glBindVertexArray(0);
   }
 
-  // // Closed event loop
-  // while (!glfwWindowShouldClose(window)) {
-  //   // Retrieve the window events
-  //   glfwWaitEvents();
-  //   processInput(window);
-  // }
-
-  // Set the background color
-  glClearColor(BACKGROUND_COLOR);
-  // Clear the colorbuffer
-  glClear(GL_COLOR_BUFFER_BIT);
-
-  // Draw
-  glm::vec4 fg_color(FOREGROUND_COLOR);
-  glUniform4fv(glGetUniformLocation(shader.programId, "fg_color_sRGB"), 1,
-               glm::value_ptr(fg_color));
-
+  vector<string> lines;
   {
-    vector<string> lines;
-    {
-      std::ifstream file(argv[1]);
-      std::string line;
-      while (std::getline(file, line)) {
-        lines.push_back(line);
-      }
-    }
-
-    vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
-    vector<FT_Face> faces = load_faces(ft, face_names);
-
-    printf("Rendering lines\n");
-    using namespace std::chrono;
-    high_resolution_clock::time_point t1 = high_resolution_clock::now();
-
-    for (size_t i = 0; i < lines.size(); i++) {
-      auto &line = lines[i];
-      vector<size_t> codepoints_face_pair;
-      vector<hb_codepoint_t> codepoints;
-      assign_codepoints_faces(line, faces, codepoints_face_pair, codepoints);
-
-      for (size_t i = 0; i < codepoints_face_pair.size(); i++) {
-        render_codepoint_to_texture(faces[codepoints_face_pair[i]],
-                                    codepoint_texures, codepoints[i]);
-      }
-      render_codepoints_to_screen(codepoints, 0,
-                                  WINDOW_HEIGHT - (LINE_HEIGHT * (i + 1)),
-                                  FONT_ZOOM, shader, codepoint_texures);
-    }
-
-    high_resolution_clock::time_point t2 = high_resolution_clock::now();
-
-    duration<double> time_span = duration_cast<duration<double>>(t2 - t1);
-    printf("Rendering lines took %f\n", time_span.count());
-
-    for (auto face : faces) {
-      FT_Done_Face(face);
+    std::ifstream file(argv[1]);
+    std::string line;
+    while (std::getline(file, line)) {
+      lines.push_back(line);
     }
   }
 
-  // Swap buffers when drawing is finished
-  glfwSwapBuffers(window);
+  // vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
+  vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+  vector<FT_Face> faces = load_faces(ft, face_names);
+
+  auto t2_ = high_resolution_clock::now();
+  auto time_span_ = duration_cast<duration<double>>(t2_ - t1_);
+  printf("Setup took %f ms\n", time_span_.count() * 1000);
+
+  // TODO: make actual calculations
+  // Render only the lines visible in the viewport
+  state = {
+      .width = WINDOW_WIDTH,
+      .height = WINDOW_HEIGHT,
+
+      .lines = lines.size(),
+
+      .start_line = 0,
+      .visible_lines = (size_t)ceil(WINDOW_HEIGHT / LINE_HEIGHT),
+  };
+
+  glfwSetKeyCallback(window, key_callback);
 
   while (!glfwWindowShouldClose(window)) {
+
+    // Set the background color
+    glClearColor(BACKGROUND_COLOR);
+    // Clear the colorbuffer
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Draw
+    glm::vec4 fg_color(FOREGROUND_COLOR);
+    glUniform4fv(glGetUniformLocation(shader.programId, "fg_color_sRGB"), 1,
+                 glm::value_ptr(fg_color));
+
+    {
+      printf("Rendering %zu lines\n", state.visible_lines);
+      auto t1 = high_resolution_clock::now();
+
+      // Create the harfbuzz buffer
+      hb_buffer_t *buf = hb_buffer_create();
+      hb_buffer_pre_allocate(buf, lines[0].size());
+
+      for (size_t i = state.start_line;
+           i < (state.visible_lines + state.start_line); i++) {
+        auto &line = lines[i];
+        vector<size_t> codepoints_face_pair;
+        vector<hb_codepoint_t> codepoints;
+        assign_codepoints_faces(line, faces, codepoints_face_pair, codepoints,
+                                buf);
+
+        for (size_t j = 0; j < codepoints_face_pair.size(); j++) {
+          if (codepoint_texures.find(codepoints[j]) ==
+              codepoint_texures.end()) {
+            render_codepoint_to_texture(faces[codepoints_face_pair[j]],
+                                        codepoint_texures, codepoints[j]);
+          }
+        }
+        render_codepoints_to_screen(
+            codepoints, 0,
+            WINDOW_HEIGHT - (LINE_HEIGHT * ((i - state.start_line) + 1)),
+            FONT_ZOOM, shader, codepoint_texures);
+      }
+
+      hb_buffer_destroy(buf);
+
+      auto t2 = high_resolution_clock::now();
+      auto time_span = duration_cast<duration<double>>(t2 - t1);
+      printf("Rendering lines took %f ms (%3.0f fps/Hz)\n",
+             time_span.count() * 1000, 1.f / time_span.count());
+    }
+
+    // Swap buffers when drawing is finished
+    glfwSwapBuffers(window);
+
     glfwWaitEvents();
-    processInput(window);
+  }
+
+  for (auto face : faces) {
+    FT_Done_Face(face);
   }
 
   // Free freetype library
@@ -505,7 +563,7 @@ int main(int argc, char **argv) {
   // Terminate GLFW
   glfwTerminate();
   return 0;
-}
+} // namespace font_renderer
 
 } // namespace font_renderer
 
@@ -514,6 +572,8 @@ int main(int argc, char **argv) {
     printf("Usage %s FILE\n", argv[0]);
     exit(EXIT_FAILURE);
   }
+
   font_renderer::main(argc, argv);
+
   return 0;
 }
