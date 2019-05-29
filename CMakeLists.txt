@@ -15,7 +15,7 @@ add_executable(opengl
   lib/glad/src/glad.c
 )
 
-target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Werror -g)
+target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Wno-c99-extensions -Werror -Wall -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
 
 add_custom_target(run

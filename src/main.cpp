@@ -91,11 +91,11 @@ void scroll_callback(GLFWwindow *window, double xoffset, double yoffset) {
   }
 }
 
-static const int WINDOW_WIDTH = 720;
+static const int WINDOW_WIDTH = 1440;
 static const int WINDOW_HEIGHT = 900;
 static const int FONT_PIXEL_HEIGHT = 17;
 static const int FONT_PIXEL_WIDTH = FONT_PIXEL_HEIGHT - 1;
-static const int FONT_ZOOM = 1;
+static const float FONT_ZOOM = 1;
 static const int LINE_HEIGHT = static_cast<int>(FONT_PIXEL_HEIGHT * 1.35);
 static const char *WINDOW_TITLE = "OpenGL";
 
@@ -224,9 +224,9 @@ void render_codepoints_to_screen(
 
     GLfloat xpos = x + ch.bearing.x * scale;
     GLfloat ypos = y - (ch.size.y - ch.bearing.y) * scale;
-    GLuint advance = ch.advance >> 6;
+    GLuint advance = (ch.advance >> 6) * scale;
 
-    GLfloat w, h;
+    GLfloat w = ch.size.x * scale, h = ch.size.y * scale;
 
     if (ch.colored) {
       GLfloat ratio_x = (GLfloat)FONT_PIXEL_WIDTH / (GLfloat)ch.size.x;
@@ -240,8 +240,6 @@ void render_codepoints_to_screen(
       advance = w;
       glUniform1i(glGetUniformLocation(shader.programId, "colored"), 1);
     } else {
-      w = ch.size.x * scale;
-      h = ch.size.y * scale;
       glUniform1i(glGetUniformLocation(shader.programId, "colored"), 0);
     }
 
@@ -285,8 +283,7 @@ void render_codepoints_to_screen(
     }
     // Now advance cursors for next glyph (note that advance is number of
     // 1 / 64 pixels)
-    // TODO: use harfbuzz glyph info instead of FreeType's
-    x += (advance * scale);
+    x += advance;
   }
 
   // Unbind VAO and texture
@@ -355,13 +352,14 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
     hb_shape(font, buf, &features[0], features.size());
 
     // Get the glyph and position information
-    unsigned int glyph_info_length, glyph_position_length;
+    unsigned int glyph_info_length;
+    // unsigned int glyph_position_length;
     hb_glyph_info_t *glyph_info =
         hb_buffer_get_glyph_infos(buf, &glyph_info_length);
-    hb_glyph_position_t *glyph_pos =
-        hb_buffer_get_glyph_positions(buf, &glyph_position_length);
+    // hb_glyph_position_t *glyph_pos =
+    // hb_buffer_get_glyph_positions(buf, &glyph_position_length);
 
-    assert(glyph_info_length == glyph_position_length);
+    // assert(glyph_info_length == glyph_position_length);
 
     // Assign a size to the vector on the first iteration and fill it with -1
     // which represents the absence of a value
@@ -377,10 +375,11 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
     // yet
     for (size_t j = 0; j < glyph_info_length; j++) {
       hb_codepoint_t codepoint = glyph_info[j].codepoint;
-      hb_position_t x_offset = glyph_pos[j].x_offset >> 6;
-      hb_position_t y_offset = glyph_pos[j].y_offset >> 6;
-      hb_position_t x_advance = glyph_pos[j].x_advance >> 6;
-      hb_position_t y_advance = glyph_pos[j].y_advance >> 6;
+      // hb_position_t x_offset = glyph_pos[j].x_offset >> 6;
+      // hb_position_t y_offset = glyph_pos[j].y_offset >> 6;
+      // hb_position_t x_advance = glyph_pos[j].x_advance >> 6;
+      // hb_position_t y_advance = glyph_pos[j].y_advance >> 6;
+      // TODO: use harfbuzz glyph info instead of FreeType's
 
       if (codepoint != 0 && codepoints[j] == MISSING) {
         codepoints[j] = codepoint;
@@ -520,6 +519,11 @@ int main(int argc, char **argv) {
   glfwSetKeyCallback(window, key_callback);
   glfwSetScrollCallback(window, scroll_callback);
 
+  // TODO: invalidation and capacity logic (LRU?, Better Hashmap?)
+  unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
+      shaping_cache;
+  shaping_cache.reserve(state.lines);
+
   while (!glfwWindowShouldClose(window)) {
 
     // Set the background color
@@ -533,6 +537,8 @@ int main(int argc, char **argv) {
                  glm::value_ptr(fg_color));
 
     {
+      auto hits = 0;
+
       printf("Rendering %zu lines\n", state.visible_lines);
       auto t1 = high_resolution_clock::now();
 
@@ -543,21 +549,34 @@ int main(int argc, char **argv) {
       for (size_t i = state.start_line;
            i < (state.visible_lines + state.start_line); i++) {
         auto &line = lines[i];
+
         vector<size_t> codepoints_face_pair;
         vector<hb_codepoint_t> codepoints;
-        assign_codepoints_faces(line, faces, codepoints_face_pair, codepoints,
-                                buf);
 
-        for (size_t j = 0; j < codepoints_face_pair.size(); j++) {
-          if (codepoint_texures.find(codepoints[j]) ==
-              codepoint_texures.end()) {
-            render_codepoint_to_texture(faces[codepoints_face_pair[j]],
-                                        codepoint_texures, codepoints[j]);
+        auto it = shaping_cache.find(line);
+        if (it == shaping_cache.end()) {
+          assign_codepoints_faces(line, faces, codepoints_face_pair, codepoints,
+                                  buf);
+          for (size_t j = 0; j < codepoints_face_pair.size(); j++) {
+            if (codepoint_texures.find(codepoints[j]) ==
+                codepoint_texures.end()) {
+              render_codepoint_to_texture(faces[codepoints_face_pair[j]],
+                                          codepoint_texures, codepoints[j]);
+            }
           }
+          // XXX: does this get dereferenced?
+          shaping_cache[line] =
+              std::make_pair(codepoints_face_pair, codepoints);
+        } else {
+          codepoints_face_pair = it->second.first;
+          codepoints = it->second.second;
+          hits++;
         }
+
         render_codepoints_to_screen(
             codepoints, 0,
-            WINDOW_HEIGHT - (LINE_HEIGHT * ((i - state.start_line) + 1)),
+            WINDOW_HEIGHT -
+                (LINE_HEIGHT * FONT_ZOOM * ((i - state.start_line) + 1)),
             FONT_ZOOM, shader, codepoint_texures);
       }
 
@@ -565,8 +584,9 @@ int main(int argc, char **argv) {
 
       auto t2 = high_resolution_clock::now();
       auto time_span = duration_cast<duration<double>>(t2 - t1);
-      printf("Rendering lines took %f ms (%3.0f fps/Hz)\n",
-             time_span.count() * 1000, 1.f / time_span.count());
+      printf("Rendering lines took %f ms (%3.0f fps/Hz),  hits rate: %3.2f\n",
+             time_span.count() * 1000, 1.f / time_span.count(),
+             (float)hits / state.visible_lines);
     }
 
     // Swap buffers when drawing is finished
