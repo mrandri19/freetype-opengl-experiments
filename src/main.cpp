@@ -1,5 +1,4 @@
 // TODO: subpixel positioning (si puo' fare con freetype? lo fa gia?)
-// FIXME: crashes with too many emoji, wtf (use emojii ipsum to test it)
 // TODO: statically link glfw, harfbuzz; making sure that both are compiled in
 // release mode
 
@@ -103,6 +102,9 @@ static const char *WINDOW_TITLE = "OpenGL";
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
 // #define FOREGROUND_COLOR 255. / 255, 0. / 255, 0. / 255, 1.0f
 
+const hb_codepoint_t CODEPOINT_MISSING_FACE = UINT32_MAX;
+const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
+
 GLuint VAO, VBO;
 
 struct character_t {
@@ -113,23 +115,26 @@ struct character_t {
   bool colored;
 };
 
+// TODO: use a glyph atlas so that we don't have to switch textures for each
+// codepoint rendered on the screen but instead just send an array of quads
 void render_codepoint_to_texture(
     FT_Face face, unordered_map<hb_codepoint_t, character_t> &codepoint_texures,
     hb_codepoint_t codepoint) {
 
   FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
+
   if (FT_HAS_COLOR(face)) {
     flags |= FT_LOAD_COLOR;
   }
 
   if (FT_Load_Glyph(face, codepoint, flags)) {
-    fprintf(stderr, "Could not load glyph with codepoint: %d\n", codepoint);
+    fprintf(stderr, "Could not load glyph with codepoint: %u\n", codepoint);
     exit(EXIT_FAILURE);
   }
 
   // Render the glyph (antialiased) into a RGB alpha map
   if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD)) {
-    fprintf(stderr, "Could not render glyph with codepoint: %d\n", codepoint);
+    fprintf(stderr, "Could not render glyph with codepoint: %u\n", codepoint);
     exit(EXIT_FAILURE);
   }
 
@@ -292,7 +297,6 @@ void render_codepoints_to_screen(
 
 vector<FT_Face> load_faces(FT_Library ft, const vector<string> &face_names) {
   vector<FT_Face> faces;
-  faces.reserve(face_names.size());
 
   for (auto face_name : face_names) {
     FT_Face face;
@@ -361,13 +365,12 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
 
     // assert(glyph_info_length == glyph_position_length);
 
-    // Assign a size to the vector on the first iteration and fill it with -1
-    // which represents the absence of a value
-    // This assumes that all of the face runs will have the same lengths
-    const auto MISSING = -1;
+    // Assign a size to the vector on the first iteration and fill it with
+    // UINT32_MAX which represents the absence of a value This assumes that all
+    // of the face runs will have the same lengths
     if (i == 0) {
-      codepoints.resize(glyph_info_length, MISSING);
-      codepoint_faces.resize(glyph_info_length, MISSING);
+      codepoints.resize(glyph_info_length, CODEPOINT_MISSING);
+      codepoint_faces.resize(glyph_info_length, CODEPOINT_MISSING_FACE);
     }
     assert(glyph_info_length == codepoint_faces.size());
 
@@ -381,7 +384,7 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
       // hb_position_t y_advance = glyph_pos[j].y_advance >> 6;
       // TODO: use harfbuzz glyph info instead of FreeType's
 
-      if (codepoint != 0 && codepoints[j] == MISSING) {
+      if (codepoint != 0 && codepoints[j] == CODEPOINT_MISSING) {
         codepoints[j] = codepoint;
         codepoint_faces[j] = i;
       }
@@ -389,7 +392,7 @@ void assign_codepoints_faces(string text, vector<FT_Face> faces,
       // If we find a glyph which is not present in this face (therefore its
       // codepoint it's 0) and which has not been assigned already then we need
       // to iterate on the next font
-      if (codepoint == 0 && codepoints[j] == MISSING) {
+      if (codepoint == 0 && codepoints[j] == CODEPOINT_MISSING) {
         all_codepoints_have_a_face = true;
       }
     }
@@ -513,7 +516,10 @@ int main(int argc, char **argv) {
       .lines = lines.size(),
 
       .start_line = 0,
-      .visible_lines = (size_t)ceil(WINDOW_HEIGHT / LINE_HEIGHT),
+      .visible_lines =
+          (((size_t)floor(WINDOW_HEIGHT / LINE_HEIGHT)) > lines.size())
+              ? lines.size()
+              : ((size_t)ceil(WINDOW_HEIGHT / LINE_HEIGHT)),
   };
 
   glfwSetKeyCallback(window, key_callback);
@@ -558,8 +564,26 @@ int main(int argc, char **argv) {
           assign_codepoints_faces(line, faces, codepoints_face_pair, codepoints,
                                   buf);
           for (size_t j = 0; j < codepoints_face_pair.size(); j++) {
+            // If the codepoint has not been rendered yet
             if (codepoint_texures.find(codepoints[j]) ==
                 codepoint_texures.end()) {
+
+              printf("codepoints[j]=%u, codepoints_face_pair[j]=%lu\n",
+                     codepoints[j], codepoints_face_pair[j]);
+
+              // If we could not assign the character to any codepoint, fallback
+              // to the last face
+              if (codepoints_face_pair[j] == CODEPOINT_MISSING_FACE &&
+                  codepoints[j] == CODEPOINT_MISSING) {
+                const auto REPLACEMENT_CHARACTER = 0x0000FFFD;
+                codepoints[j] =
+                    FT_Get_Char_Index(faces[0], REPLACEMENT_CHARACTER);
+                codepoints_face_pair[j] = 0;
+              }
+
+              assert(codepoints_face_pair[j] != CODEPOINT_MISSING_FACE);
+              assert(codepoints[j] != CODEPOINT_MISSING);
+
               render_codepoint_to_texture(faces[codepoints_face_pair[j]],
                                           codepoint_texures, codepoints[j]);
             }
@@ -599,11 +623,12 @@ int main(int argc, char **argv) {
     FT_Done_Face(face);
   }
 
-  // Free freetype library
   FT_Done_FreeType(ft);
 
-  // Terminate GLFW
+  glfwDestroyWindow(window);
+
   glfwTerminate();
+
   return 0;
 } // namespace font_renderer
 
