@@ -15,9 +15,6 @@
 // glad - OpenGL loader
 #include <glad/glad.h>
 
-// glfw - window and inputs
-#include <GLFW/glfw3.h>
-
 // glm - OpenGL mathematics
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -25,6 +22,7 @@
 
 // Shader abstraction
 #include "shader.h"
+#include "window.h"
 
 // Utils
 #include "util.h"
@@ -50,11 +48,10 @@ static const int kFontPixelHeight = 17;
 static const int kFontPixelWidth = kFontPixelHeight - 1;
 static const float kFontZoom = 1;
 static const int kLineHeight = static_cast<int>(kFontPixelHeight * 1.35);
-static const char* kWindowTitle = "OpenGL";
+static const string kWindowTitle = "OpenGL";
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
-// #define FOREGROUND_COLOR 255. / 255, 0. / 255, 0. / 255, 1.0f
 
 const hb_codepoint_t CODEPOINT_MISSING_FACE = UINT32_MAX;
 const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
@@ -410,21 +407,8 @@ int main(int argc UNUSED, char** argv) {
   printf("Beginning setup\n");
   auto t1_ = high_resolution_clock::now();
 
-  glfwInit();  // Init GLFW
-
-  // Require OpenGL >= 4.0
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-
-  // We want a context that only supports the new core functionality
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-  // Create a windowed window
-  GLFWwindow* window = glfwCreateWindow(kWindowWidth, kWindowHeight,
-                                        kWindowTitle, nullptr, nullptr);
-
-  // Make the current context active
-  glfwMakeContextCurrent(window);
+  Window window(kWindowWidth, kWindowHeight, kWindowTitle, KeyCallback,
+                ScrollCallback);
 
   // Check that glad worked
   if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
@@ -450,6 +434,7 @@ int main(int argc UNUSED, char** argv) {
 
   // Compile and link the shaders, then use them
   shader.use();
+
   glm::mat4 projection = glm::ortho(0.0f, static_cast<GLfloat>(kWindowWidth),
                                     0.0f, static_cast<GLfloat>(kWindowHeight));
   glUniformMatrix4fv(glGetUniformLocation(shader.programId, "projection"), 1,
@@ -512,26 +497,20 @@ int main(int argc UNUSED, char** argv) {
   // Render only the lines visible in the viewport
   state.width = kWindowWidth;
   state.height = kWindowHeight;
-
   state.kLineHeight = kLineHeight;
-
   state.lines = lines.size();
-
   state.start_line = 0;
   state.visible_lines =
       ((static_cast<size_t>(floor(kWindowHeight / kLineHeight))) > lines.size())
           ? lines.size()
           : (static_cast<size_t>(ceil(kWindowHeight / kLineHeight)));
 
-  glfwSetKeyCallback(window, KeyCallback);
-  glfwSetScrollCallback(window, ScrollCallback);
-
   // TODO(andrea): invalidation and capacity logic (LRU?, Better Hashmap?)
   unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
       shaping_cache;
   shaping_cache.reserve(state.lines);
 
-  while (!glfwWindowShouldClose(window)) {
+  while (!glfwWindowShouldClose(window.window)) {
     // Set the background color
     glClearColor(BACKGROUND_COLOR);
     // Clear the colorbuffer
@@ -609,7 +588,7 @@ int main(int argc UNUSED, char** argv) {
     }
 
     // Swap buffers when drawing is finished
-    glfwSwapBuffers(window);
+    glfwSwapBuffers(window.window);
 
     glfwWaitEvents();
   }
@@ -619,10 +598,6 @@ int main(int argc UNUSED, char** argv) {
   }
 
   FT_Done_FreeType(ft);
-
-  glfwDestroyWindow(window);
-
-  glfwTerminate();
 
   return 0;
 }
