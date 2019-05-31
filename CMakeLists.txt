@@ -11,11 +11,11 @@ include_directories(/usr/include/libpng16)
 include_directories(lib/glad/include)
 
 add_executable(opengl
-  src/main.cpp
+  src/main.cc
   lib/glad/src/glad.c
 )
 
-target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Wno-c99-extensions -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
+target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
 
 # Try to find clang-tidy
