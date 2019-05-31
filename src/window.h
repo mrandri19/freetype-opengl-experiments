@@ -1,5 +1,5 @@
-#ifndef WINDOW_H
-#define WINDOW_H
+#ifndef LETTERA_WINDOW_H
+#define LETTERA_WINDOW_H
 
 #include <GLFW/glfw3.h>
 using std::string;
@@ -30,6 +30,7 @@ struct Window {
     // Enable vsync
     glfwSwapInterval(1);
   }
+
   ~Window() {
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -41,4 +42,4 @@ struct Window {
   Window& operator=(const Window&) = delete;
 };
 
-#endif  // WINDOW_H
+#endif  // LETTERA_WINDOW_H

@@ -1,5 +1,5 @@
-#ifndef UTIL_H
-#define UTIL_H
+#ifndef LETTERA_UTIL_H
+#define LETTERA_UTIL_H
 #include <glad/glad.h>
 
 #define UNUSED __attribute__((unused))
@@ -49,7 +49,7 @@ void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
       break;
 
     case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
-      _type = "UDEFINED BEHAVIOR";
+      _type = "UNDEFINED BEHAVIOR";
       break;
 
     case GL_DEBUG_TYPE_PORTABILITY:

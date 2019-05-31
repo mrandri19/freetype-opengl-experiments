@@ -1,5 +1,5 @@
-#ifndef SHADER_H
-#define SHADER_H
+#ifndef LETTERA_SHADER_H
+#define LETTERA_SHADER_H
 
 #include <glad/glad.h>
 

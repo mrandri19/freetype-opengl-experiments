@@ -1,9 +1,8 @@
 #version 330
 
-in vec4 in_vertex;
+layout (location=0) in vec4 in_vertex;
 
 uniform mat4 projection;
-uniform vec4 bg_color;
 
 out vec2 ex_texCoords;
 

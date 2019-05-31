@@ -20,12 +20,11 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-// Shader abstraction
+#include "freetype.h"
 #include "shader.h"
+#include "util.h"
 #include "window.h"
 
-// Utils
-#include "util.h"
 // FreeType
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -399,17 +398,7 @@ void AssignCodepointsFaces(string text, vector<FT_Face> faces,
   }
 }
 
-int main(int argc UNUSED, char** argv) {
-  using std::chrono::duration;
-  using std::chrono::duration_cast;
-  using std::chrono::high_resolution_clock;
-
-  printf("Beginning setup\n");
-  auto t1_ = high_resolution_clock::now();
-
-  Window window(kWindowWidth, kWindowHeight, kWindowTitle, KeyCallback,
-                ScrollCallback);
-
+void InitOpenGL() {
   // Check that glad worked
   if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress))) {
     fprintf(stderr, "glad failed to load OpenGL loader\n");
@@ -419,96 +408,17 @@ int main(int argc UNUSED, char** argv) {
   // Enable debug output
   glEnable(GL_DEBUG_OUTPUT);
   glDebugMessageCallback(GLDebugMessageCallback, nullptr);
+}
 
-  // https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
-  // TODO(andrea): understand WHY it works, and if this is an actual solution,
-  // then write a blog post
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_COLOR);
-
-  // Set the viewport
-  glViewport(0, 0, kWindowWidth, kWindowHeight);
-
-  // Load the shaders
-  Shader shader("src/shaders/text.v.glsl", "src/shaders/text.f.glsl");
-
-  // Compile and link the shaders, then use them
-  shader.use();
-
-  glm::mat4 projection = glm::ortho(0.0f, static_cast<GLfloat>(kWindowWidth),
-                                    0.0f, static_cast<GLfloat>(kWindowHeight));
-  glUniformMatrix4fv(glGetUniformLocation(shader.programId, "projection"), 1,
-                     GL_FALSE, glm::value_ptr(projection));
-
-  // Initialize FreeType
-  FT_Library ft;
-  if (FT_Init_FreeType(&ft)) {
-    fprintf(stderr, "Could not load freetype\n");
-    exit(EXIT_FAILURE);
-  }
-
-  // Set which filter to use for the LCD Subpixel Antialiasing
-  FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_DEFAULT);
-
-  // Disable byte-alignment restriction
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-  unordered_map<hb_codepoint_t, Character> codepoint_texures;
-
-  // Init Vertex Array Object (VAO)
-  {
-    glGenVertexArrays(1, &VAO);
-    glBindVertexArray(VAO);
-    // Init Vertex Buffer Object (VBO)
-    {
-      glGenBuffers(1, &VBO);
-      glBindBuffer(GL_ARRAY_BUFFER, VBO);
-      glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 6 * 4, nullptr,
-                   GL_DYNAMIC_DRAW);
-
-      GLuint location = glGetAttribLocation(shader.programId, "in_vertex");
-      glEnableVertexAttribArray(location);
-      glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE,
-                            4 * sizeof(GLfloat), nullptr);
-
-      glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
-    glBindVertexArray(0);
-  }
-
-  vector<string> lines;
-  {
-    std::ifstream file(argv[1]);
-    std::string line;
-    while (std::getline(file, line)) {
-      lines.push_back(line);
-    }
-  }
-
-  // vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
-  vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
-  vector<FT_Face> faces = LoadFaces(ft, face_names);
-
-  auto t2_ = high_resolution_clock::now();
-  auto time_span_ = duration_cast<duration<double>>(t2_ - t1_);
-  printf("Setup took %f ms\n", time_span_.count() * 1000);
-
-  // TODO(andrea): handle changing viewport
-  // Render only the lines visible in the viewport
-  state.width = kWindowWidth;
-  state.height = kWindowHeight;
-  state.kLineHeight = kLineHeight;
-  state.lines = lines.size();
-  state.start_line = 0;
-  state.visible_lines =
-      ((static_cast<size_t>(floor(kWindowHeight / kLineHeight))) > lines.size())
-          ? lines.size()
-          : (static_cast<size_t>(ceil(kWindowHeight / kLineHeight)));
-
-  // TODO(andrea): invalidation and capacity logic (LRU?, Better Hashmap?)
-  unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
-      shaping_cache;
-  shaping_cache.reserve(state.lines);
+void MainLoop(
+    const Window& window, const Shader& shader, const vector<string>& lines,
+    const vector<FT_Face>& faces,
+    unordered_map<hb_codepoint_t, Character>* codepoint_texures,
+    unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>*
+        shaping_cache) {
+  using std::chrono::duration;
+  using std::chrono::duration_cast;
+  using std::chrono::high_resolution_clock;
 
   while (!glfwWindowShouldClose(window.window)) {
     // Set the background color
@@ -538,14 +448,14 @@ int main(int argc UNUSED, char** argv) {
         vector<size_t> codepoints_face_pair;
         vector<hb_codepoint_t> codepoints;
 
-        auto it = shaping_cache.find(line);
-        if (it == shaping_cache.end()) {
+        auto it = shaping_cache->find(line);
+        if (it == shaping_cache->end()) {
           AssignCodepointsFaces(line, faces, &codepoints_face_pair, &codepoints,
                                 buf);
           for (size_t j = 0; j < codepoints_face_pair.size(); j++) {
             // If the codepoint has not been rendered yet
-            if (codepoint_texures.find(codepoints[j]) ==
-                codepoint_texures.end()) {
+            if (codepoint_texures->find(codepoints[j]) ==
+                codepoint_texures->end()) {
               // If we could not assign the character to any codepoint, fallback
               // to the last face
               if (codepoints_face_pair[j] == CODEPOINT_MISSING_FACE &&
@@ -560,11 +470,11 @@ int main(int argc UNUSED, char** argv) {
               assert(codepoints[j] != CODEPOINT_MISSING);
 
               RenderCodepointToTexture(faces[codepoints_face_pair[j]],
-                                       &codepoint_texures, codepoints[j]);
+                                       codepoint_texures, codepoints[j]);
             }
           }
           // XXX: does this get dereferenced?
-          shaping_cache[line] =
+          (*shaping_cache)[line] =
               std::make_pair(codepoints_face_pair, codepoints);
         } else {
           codepoints_face_pair = it->second.first;
@@ -575,7 +485,7 @@ int main(int argc UNUSED, char** argv) {
         RenderCodepointsToScreen(codepoints, 0,
                                  kWindowHeight - (kLineHeight * kFontZoom *
                                                   ((i - state.start_line) + 1)),
-                                 kFontZoom, shader, codepoint_texures);
+                                 kFontZoom, shader, *codepoint_texures);
       }
 
       hb_buffer_destroy(buf);
@@ -592,6 +502,99 @@ int main(int argc UNUSED, char** argv) {
 
     glfwWaitEvents();
   }
+}
+
+int main(int argc UNUSED, char** argv) {
+  Window window(kWindowWidth, kWindowHeight, kWindowTitle, KeyCallback,
+                ScrollCallback);
+
+  InitOpenGL();
+
+  // Load the shaders
+  Shader shader("src/shaders/text.v.glsl", "src/shaders/text.f.glsl");
+  // Compile and link the shaders, then use them
+  shader.use();
+
+  // https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
+  // TODO(andrea): understand WHY it works, and if this is an actual solution,
+  // then write a blog post
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_COLOR);
+
+  // Set the viewport
+  glViewport(0, 0, kWindowWidth, kWindowHeight);
+
+  // Disable byte-alignment restriction (our textures' size is not a multiple of
+  // 4)
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+  // Init Vertex Array Object (VAO)
+  {
+    glGenVertexArrays(1, &VAO);
+    glBindVertexArray(VAO);
+    // Init Vertex Buffer Object (VBO)
+    {
+      glGenBuffers(1, &VBO);
+      glBindBuffer(GL_ARRAY_BUFFER, VBO);
+      glBufferData(GL_ARRAY_BUFFER, sizeof(GLfloat) * 6 * 4, nullptr,
+                   GL_DYNAMIC_DRAW);
+
+      GLuint location = glGetAttribLocation(shader.programId, "in_vertex");
+      glEnableVertexAttribArray(location);
+      glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE,
+                            4 * sizeof(GLfloat), nullptr);
+
+      glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    glBindVertexArray(0);
+  }
+
+  glm::mat4 projection = glm::ortho(0.0f, static_cast<GLfloat>(kWindowWidth),
+                                    0.0f, static_cast<GLfloat>(kWindowHeight));
+  glUniformMatrix4fv(glGetUniformLocation(shader.programId, "projection"), 1,
+                     GL_FALSE, glm::value_ptr(projection));
+
+  // Initialize FreeType
+  FT_Library ft;
+  if (FT_Init_FreeType(&ft)) {
+    fprintf(stderr, "Could not load freetype\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Set which filter to use for the LCD Subpixel Antialiasing
+  FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_DEFAULT);
+
+  vector<string> lines;
+  {
+    std::ifstream file(argv[1]);
+    std::string line;
+    while (std::getline(file, line)) {
+      lines.push_back(line);
+    }
+  }
+
+  vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+  vector<FT_Face> faces = LoadFaces(ft, face_names);
+
+  // TODO(andrea): handle changing viewport
+  // Render only the lines visible in the viewport
+  state.width = kWindowWidth;
+  state.height = kWindowHeight;
+  state.kLineHeight = kLineHeight;
+  state.lines = lines.size();
+  state.start_line = 0;
+  state.visible_lines =
+      ((static_cast<size_t>(floor(kWindowHeight / kLineHeight))) > lines.size())
+          ? lines.size()
+          : (static_cast<size_t>(ceil(kWindowHeight / kLineHeight)));
+
+  unordered_map<hb_codepoint_t, Character> codepoint_texures;
+  // TODO(andrea): invalidation and capacity logic (LRU?, Better Hashmap?)
+  unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
+      shaping_cache;
+  shaping_cache.reserve(state.lines);
+
+  MainLoop(window, shader, lines, faces, &codepoint_texures, &shaping_cache);
 
   for (auto face : faces) {
     FT_Done_Face(face);
