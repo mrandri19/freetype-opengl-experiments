@@ -15,11 +15,27 @@ add_executable(opengl
   lib/glad/src/glad.c
 )
 
-target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Wno-c99-extensions -Werror -Wall -pedantic -g)
+target_compile_options(opengl PUBLIC -Wno-writable-strings -Wno-write-strings -Wno-c99-extensions -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
 
-add_custom_target(run
-    COMMAND ./build/opengl
-    DEPENDS opengl
-    WORKING_DIRECTORY ../${CMAKE_PROJECT_DIR}
+# Try to find clang-tidy
+find_program(
+  CLANG_TIDY_EXE
+  NAMES "clang-tidy"
+  DOC "Path to clang-tidy executable"
+  )
+if(NOT CLANG_TIDY_EXE)
+  message(STATUS "clang-tidy not found.")
+else()
+  message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
+  set(DO_CLANG_TIDY "${CLANG_TIDY_EXE}" "-checks=-*,google-*")
+endif()
+
+set_target_properties(
+  opengl PROPERTIES
+  CXX_CLANG_TIDY "${DO_CLANG_TIDY}"
 )
+
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS)
+
