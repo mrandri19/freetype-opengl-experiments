@@ -1,5 +1,6 @@
 // TODO(andrea): subpixel positioning (si puo' fare con freetype? lo fa gia?)
 // TODO(andrea): statically link glfw, harfbuzz; making sure that both are
+// TODO(andrea): benchmark startup time (500ms on emoji file, wtf)
 // compiled in release mode
 
 // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
@@ -20,8 +21,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include "freetype.h"
 #include "shader.h"
+#include "texture_atlas.h"
 #include "util.h"
 #include "window.h"
 
@@ -41,12 +42,13 @@ using std::string;
 using std::unordered_map;
 using std::vector;
 
-static const int kWindowWidth = 1440;
-static const int kWindowHeight = 900;
+static const int kWindowWidth = 1024;
+static const int kWindowHeight = 768;
 static const int kFontPixelHeight = 17;
 static const int kFontPixelWidth = kFontPixelHeight - 1;
 static const float kFontZoom = 1;
-static const int kLineHeight = static_cast<int>(kFontPixelHeight * 1.35);
+static const int kLineHeight =
+    static_cast<int>(kFontPixelHeight * 1.35); // Copied from VSCode's code
 static const string kWindowTitle = "OpenGL";
 
 #define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
@@ -58,7 +60,7 @@ const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
 GLuint VAO, VBO;
 
 struct Character {
-  GLuint textureID;
+  glm::vec4 texture_coordinates;
   glm::ivec2 size;
   glm::ivec2 bearing;
   GLuint advance;
@@ -73,36 +75,38 @@ struct State {
 
   size_t lines;
 
-  ssize_t start_line;  // must be signed to avoid underflow when subtracting 1
-                       // to check if we can go up
+  ssize_t start_line; // must be signed to avoid underflow when subtracting 1
+                      // to check if we can go up
   size_t visible_lines;
 } state;
 
-void KeyCallback(GLFWwindow* window, int key, int scancode UNUSED, int action,
+void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
                  int mods UNUSED) {
-  if (key == GLFW_KEY_DOWN && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+  if ((key == GLFW_KEY_DOWN || key == GLFW_KEY_J) &&
+      (action == GLFW_PRESS || action == GLFW_REPEAT)) {
     if ((state.start_line + state.visible_lines + 1) <= state.lines) {
       state.start_line++;
     }
   }
-  if (key == GLFW_KEY_UP && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+  if ((key == GLFW_KEY_UP || key == GLFW_KEY_K) &&
+      (action == GLFW_PRESS || action == GLFW_REPEAT)) {
     if ((state.start_line - 1) >= 0) {
       state.start_line--;
     }
   }
-  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+  if ((key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, true);
   }
 }
 
-void ScrollCallback(GLFWwindow* window UNUSED, double xoffset UNUSED,
+void ScrollCallback(GLFWwindow *window UNUSED, double xoffset UNUSED,
                     double yoffset) {
   int lines_to_scroll = yoffset;
-  if (yoffset > 0) {  // going up
+  if (yoffset > 0) { // going up
     if ((state.start_line - lines_to_scroll) >= 0) {
       state.start_line -= lines_to_scroll;
     }
-  } else {  // going down
+  } else { // going down
     lines_to_scroll = -lines_to_scroll;
     if ((state.start_line + state.visible_lines + lines_to_scroll) <=
         state.lines) {
@@ -114,8 +118,8 @@ void ScrollCallback(GLFWwindow* window UNUSED, double xoffset UNUSED,
 // TODO(andrea): use a glyph atlas so that we don't have to switch textures for
 // each codepoint rendered on the screen but instead just send an array of quads
 void RenderCodepointToTexture(
-    FT_Face face, unordered_map<hb_codepoint_t, Character>* codepoint_texures,
-    hb_codepoint_t codepoint) {
+    FT_Face face, unordered_map<hb_codepoint_t, Character> *codepoint_texures,
+    hb_codepoint_t codepoint, TextureAtlas *atlas) {
   FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
 
   if (FT_HAS_COLOR(face)) {
@@ -128,87 +132,65 @@ void RenderCodepointToTexture(
   }
 
   // Render the glyph (antialiased) into a RGB alpha map
+  // TODO(andrea): can this be removed when it has color?
   if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD)) {
     fprintf(stderr, "Could not render glyph with codepoint: %u\n", codepoint);
     exit(EXIT_FAILURE);
   }
 
-  {
-    // Generate the texture
-    GLuint texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-
-    vector<unsigned char> bitmap_buffer(face->glyph->bitmap.rows *
-                                        face->glyph->bitmap.width);
-
-    if (!FT_HAS_COLOR(face)) {
-      // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
-      // matrix which is rows * width. For each row i, buffer[i][pitch] is
-      // just a padding byte, therefore we can ignore it
-      for (uint i = 0; i < face->glyph->bitmap.rows; i++) {
-        for (uint j = 0; j < face->glyph->bitmap.width; j++) {
-          unsigned char ch =
-              face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
-          bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
-        }
+  vector<unsigned char> bitmap_buffer(face->glyph->bitmap.rows *
+                                      face->glyph->bitmap.width);
+  if (!FT_HAS_COLOR(face)) {
+    // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
+    // matrix which is rows * width. For each row i, buffer[i][pitch] is
+    // just a padding byte, therefore we can ignore it
+    for (uint i = 0; i < face->glyph->bitmap.rows; i++) {
+      for (uint j = 0; j < face->glyph->bitmap.width; j++) {
+        unsigned char ch =
+            face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
+        bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
       }
     }
-
-    // If the glyph is not colored then it is subpixel antialiased so the
-    // texture will have 3x the width
-    GLsizei texture_width;
-    GLsizei texture_height;
-
-    if (FT_HAS_COLOR(face)) {
-      texture_width = face->glyph->bitmap.width;
-      texture_height = face->glyph->bitmap.rows;
-    } else {
-      texture_width = face->glyph->bitmap.width / 3;
-      texture_height = face->glyph->bitmap.rows;
-    }
-
-    if (FT_HAS_COLOR(face)) {
-      // Load data (the texture format is RGBA, 4 channes but the buffer
-      // internal format is BGRA)
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texture_width, texture_height, 0,
-                   GL_BGRA, GL_UNSIGNED_BYTE, face->glyph->bitmap.buffer);
-
-      // Generate mipmaps for the texture
-      glGenerateMipmap(GL_TEXTURE_2D);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                      GL_LINEAR_MIPMAP_LINEAR);
-    } else {
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, texture_width, texture_height, 0,
-                   GL_RGB, GL_UNSIGNED_BYTE, &bitmap_buffer[0]);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    }
-
-    // Set texture wrapping options
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
-    // Set linear filtering for minifying and magnifying
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    Character ch;
-    ch.textureID = texture;
-    ch.size = glm::ivec2(texture_width, texture_height);
-    ch.bearing = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top);
-    ch.advance = static_cast<GLuint>(face->glyph->advance.x);
-    ch.colored = static_cast<bool> FT_HAS_COLOR(face);
-
-    codepoint_texures->insert({codepoint, ch});
   }
+
+  // If the glyph is not colored then it is subpixel antialiased so the
+  // texture will have 3x the width
+  GLsizei texture_width;
+  GLsizei texture_height;
+
+  if (FT_HAS_COLOR(face)) {
+    texture_width = face->glyph->bitmap.width;
+    texture_height = face->glyph->bitmap.rows;
+  } else {
+    texture_width = face->glyph->bitmap.width / 3;
+    texture_height = face->glyph->bitmap.rows;
+  }
+
+  glm::vec4 texture_coordinates;
+
+  if (FT_HAS_COLOR(face)) {
+    texture_coordinates = atlas->AddColored(face->glyph->bitmap.buffer,
+                                            texture_width, texture_height);
+  } else {
+    texture_coordinates = atlas->AddMonochromatic(
+        bitmap_buffer.data(), texture_width, texture_height);
+  }
+
+  Character ch;
+  ch.texture_coordinates = texture_coordinates;
+  ch.size = glm::ivec2(texture_width, texture_height);
+  ch.bearing = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top);
+  ch.advance = static_cast<GLuint>(face->glyph->advance.x);
+  ch.colored = static_cast<bool> FT_HAS_COLOR(face);
+
+  codepoint_texures->insert({codepoint, ch});
 }
 
 void RenderCodepointsToScreen(
-    const vector<hb_codepoint_t>& codepoints, GLfloat x, GLfloat y,
-    GLfloat scale, const Shader& shader,
-    const unordered_map<hb_codepoint_t, Character>& glyph_index_texures) {
-  // Activate the texture unit
-  glActiveTexture(GL_TEXTURE0);
-
+    const vector<hb_codepoint_t> &codepoints, GLfloat x, GLfloat y,
+    GLfloat scale, const Shader &shader,
+    const unordered_map<hb_codepoint_t, Character> &glyph_index_texures,
+    const TextureAtlas &texture_atlas) {
   // Bind the vertex array object since we'll be using it in the loop
   glBindVertexArray(VAO);
 
@@ -244,7 +226,10 @@ void RenderCodepointsToScreen(
       glUniform1i(glGetUniformLocation(shader.programId, "colored"), 0);
     }
 
+    auto tc = ch.texture_coordinates;
+
     // Update VBO for each Character
+    // TODO(andrea): I guess this coordinates now are wrong?
     GLfloat vertices[6][4] = {/*
                            a
                            |
@@ -252,10 +237,9 @@ void RenderCodepointsToScreen(
                            |
                            c--------b
                          */
-                              {xpos, ypos + h, 0.0, 0.0},
-                              {xpos, ypos, 0.0, 1.0},
-                              {xpos + w, ypos, 1.0, 1.0},
-
+                              {xpos, ypos + h, tc.x, tc.y},
+                              {xpos, ypos, tc.x, tc.y + tc.w},
+                              {xpos + w, ypos, tc.x + tc.z, tc.y + tc.w},
                               /*
                                                   d--------f
                                                            |
@@ -263,35 +247,38 @@ void RenderCodepointsToScreen(
                                                            |
                                                            e
                                                 */
-                              {xpos, ypos + h, 0.0, 0.0},
-                              {xpos + w, ypos, 1.0, 1.0},
-                              {xpos + w, ypos + h, 1.0, 0.0}};
+                              {xpos, ypos + h, tc.x, tc.y},
+                              {xpos + w, ypos, tc.x + tc.z, tc.y + tc.w},
+                              {xpos + w, ypos + h, tc.x + tc.z, tc.y}};
 
-    // Bind the Character's texure
+    // Bind the texture to the active texture unit
+    glActiveTexture(GL_TEXTURE0);
+
+    // TODO(andrea): to draw both emojiis and text we need to switch between
+    // two textures
+    glBindTexture(GL_TEXTURE_2D, (ch.colored)
+                                     ? texture_atlas.getColoredTexture()
+                                     : texture_atlas.getMonochromaticTexture());
     {
-      glBindTexture(GL_TEXTURE_2D, ch.textureID);
       // Update content of VBO memory
-      {
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-      }
+      glBindBuffer(GL_ARRAY_BUFFER, VBO);
+      { glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices); }
+      glBindBuffer(GL_ARRAY_BUFFER, 0);
 
       // Render quad
       glDrawArrays(GL_TRIANGLES, 0, 6);
-
-      glBindTexture(GL_TEXTURE_2D, 0);
     }
+    glBindTexture(GL_TEXTURE_2D, 0);
     // Now advance cursors for next glyph (note that advance is number of
     // 1 / 64 pixels)
     x += advance;
   }
 
-  // Unbind VAO and texture
+  // Unbind VAO
   glBindVertexArray(0);
 }
 
-vector<FT_Face> LoadFaces(FT_Library ft, const vector<string>& face_names) {
+vector<FT_Face> LoadFaces(FT_Library ft, const vector<string> &face_names) {
   vector<FT_Face> faces;
 
   for (auto face_name : face_names) {
@@ -319,9 +306,9 @@ vector<FT_Face> LoadFaces(FT_Library ft, const vector<string>& face_names) {
 }
 
 void AssignCodepointsFaces(string text, vector<FT_Face> faces,
-                           vector<size_t>* codepoint_faces,
-                           vector<hb_codepoint_t>* codepoints,
-                           hb_buffer_t* buf) {
+                           vector<size_t> *codepoint_faces,
+                           vector<hb_codepoint_t> *codepoints,
+                           hb_buffer_t *buf) {
   // Flag to break the for loop when all of the codepoints have been assigned to
   // a face
   bool all_codepoints_have_a_face = true;
@@ -341,7 +328,7 @@ void AssignCodepointsFaces(string text, vector<FT_Face> faces,
 
     // Create a font using the face provided by freetype
     FT_Face face = faces[i];
-    hb_font_t* font = hb_ft_font_create(face, nullptr);
+    hb_font_t *font = hb_ft_font_create(face, nullptr);
 
     vector<hb_feature_t> features(3);
     assert(hb_feature_from_string("kern=1", -1, &features[0]));
@@ -354,7 +341,7 @@ void AssignCodepointsFaces(string text, vector<FT_Face> faces,
     // Get the glyph and position information
     unsigned int glyph_info_length;
     // unsigned int glyph_position_length;
-    hb_glyph_info_t* glyph_info =
+    hb_glyph_info_t *glyph_info =
         hb_buffer_get_glyph_infos(buf, &glyph_info_length);
     // hb_glyph_position_t *glyph_pos =
     // hb_buffer_get_glyph_positions(buf, &glyph_position_length);
@@ -411,11 +398,12 @@ void InitOpenGL() {
 }
 
 void MainLoop(
-    const Window& window, const Shader& shader, const vector<string>& lines,
-    const vector<FT_Face>& faces,
-    unordered_map<hb_codepoint_t, Character>* codepoint_texures,
-    unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>*
-        shaping_cache) {
+    const Window &window, const Shader &shader, const vector<string> &lines,
+    const vector<FT_Face> &faces,
+    unordered_map<hb_codepoint_t, Character> *codepoint_texures,
+    unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
+        *shaping_cache,
+    TextureAtlas *texture_atlas) {
   using std::chrono::duration;
   using std::chrono::duration_cast;
   using std::chrono::high_resolution_clock;
@@ -438,12 +426,12 @@ void MainLoop(
       auto t1 = high_resolution_clock::now();
 
       // Create the harfbuzz buffer
-      hb_buffer_t* buf = hb_buffer_create();
+      hb_buffer_t *buf = hb_buffer_create();
       hb_buffer_pre_allocate(buf, lines[0].size());
 
       for (size_t i = state.start_line;
            i < (state.visible_lines + state.start_line); i++) {
-        auto& line = lines[i];
+        auto &line = lines[i];
 
         vector<size_t> codepoints_face_pair;
         vector<hb_codepoint_t> codepoints;
@@ -470,7 +458,8 @@ void MainLoop(
               assert(codepoints[j] != CODEPOINT_MISSING);
 
               RenderCodepointToTexture(faces[codepoints_face_pair[j]],
-                                       codepoint_texures, codepoints[j]);
+                                       codepoint_texures, codepoints[j],
+                                       texture_atlas);
             }
           }
           // XXX: does this get dereferenced?
@@ -485,7 +474,8 @@ void MainLoop(
         RenderCodepointsToScreen(codepoints, 0,
                                  kWindowHeight - (kLineHeight * kFontZoom *
                                                   ((i - state.start_line) + 1)),
-                                 kFontZoom, shader, *codepoint_texures);
+                                 kFontZoom, shader, *codepoint_texures,
+                                 *texture_atlas);
       }
 
       hb_buffer_destroy(buf);
@@ -504,7 +494,7 @@ void MainLoop(
   }
 }
 
-int main(int argc UNUSED, char** argv) {
+int main(int argc UNUSED, char **argv) {
   Window window(kWindowWidth, kWindowHeight, kWindowTitle, KeyCallback,
                 ScrollCallback);
 
@@ -576,6 +566,8 @@ int main(int argc UNUSED, char** argv) {
   vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
   vector<FT_Face> faces = LoadFaces(ft, face_names);
 
+  TextureAtlas texture_atlas;
+
   // TODO(andrea): handle changing viewport
   // Render only the lines visible in the viewport
   state.width = kWindowWidth;
@@ -594,7 +586,8 @@ int main(int argc UNUSED, char** argv) {
       shaping_cache;
   shaping_cache.reserve(state.lines);
 
-  MainLoop(window, shader, lines, faces, &codepoint_texures, &shaping_cache);
+  MainLoop(window, shader, lines, faces, &codepoint_texures, &shaping_cache,
+           &texture_atlas);
 
   for (auto face : faces) {
     FT_Done_Face(face);
@@ -605,9 +598,9 @@ int main(int argc UNUSED, char** argv) {
   return 0;
 }
 
-}  // namespace font_renderer
+} // namespace font_renderer
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (argc != 2) {
     printf("Usage %s FILE\n", argv[0]);
     exit(EXIT_FAILURE);
