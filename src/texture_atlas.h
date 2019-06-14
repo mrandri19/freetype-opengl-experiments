@@ -6,87 +6,109 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
-#include "texture.h"
 #include "util.h"
 
 // TODO(andrea): remove
 #include <cstdio>
 
+namespace texture_atlas {
+
 // TODO(andrea): find an appropriate size for the texture and handle using
 // multiple textures units
-static GLsizei kTextureWidth = 1024;
-static GLsizei kTextureHeight = 1024;
+// TODO(andrea): LRU caching
+static GLsizei kTextureDepth = 1024;
+static GLsizei kColoredMipLevelCount = 2;
+static GLsizei kMonochromaticMipLevelCount = 1;
 
 class TextureAtlas {
-private:
-  GLint colored_xoffset_ = 0, colored_yoffset_ = 0;
-  GLint monochromatic_xoffset_ = 0, monochromatic_yoffset_ = 0;
-  Texture colored_texture_, monochromatic_texture_;
+ private:
+  GLuint colored_offset_ = 0, monochromatic_offset_ = 0;
+  GLuint colored_texture_, monochromatic_texture_;
+  GLsizei coloredTextureWidth_, coloredTextureHeight_;
+  GLsizei monochromaticTextureWidth_, monochromaticTextureHeight_;
 
-public:
-  TextureAtlas()
-      : colored_texture_(kTextureWidth, kTextureWidth, GL_RGBA, GL_BGRA, true),
-        monochromatic_texture_(kTextureWidth, kTextureWidth, GL_RGB, GL_RGB){};
+ public:
+  TextureAtlas(GLsizei coloredTextureWidth, GLsizei coloredTextureHeight,
+               GLsizei monochromaticTextureWidth,
+               GLsizei monochromaticTextureHeight)
+      : coloredTextureWidth_(coloredTextureWidth),
+        coloredTextureHeight_(coloredTextureHeight),
+        monochromaticTextureWidth_(monochromaticTextureWidth),
+        monochromaticTextureHeight_(monochromaticTextureHeight) {
+    glGenTextures(1, &colored_texture_);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, colored_texture_);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, kColoredMipLevelCount, GL_RGBA8,
+                   coloredTextureWidth_, coloredTextureHeight_, kTextureDepth);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
-  ~TextureAtlas(){};
+    glGenTextures(1, &monochromatic_texture_);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, monochromatic_texture_);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, kMonochromaticMipLevelCount, GL_RGB8,
+                   monochromaticTextureWidth, monochromaticTextureHeight,
+                   kTextureDepth);
+
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+  }
+
+  ~TextureAtlas() {
+    glDeleteTextures(1, &colored_texture_);
+    glDeleteTextures(1, &monochromatic_texture_);
+  };
 
   // TODO(andrea): AddColored and AddMonochromatic can be DRYed up
-  glm::vec4 AddColored(unsigned char *bitmap_buffer, GLsizei width,
-                       GLsizei height) {
-    assert(colored_xoffset_ < kTextureWidth);
-    assert(colored_yoffset_ < kTextureHeight);
+  std::tuple<GLuint, GLuint, glm::vec2> AddColored(unsigned char *bitmap_buffer,
+                                                   GLsizei width,
+                                                   GLsizei height) {
+    assert(static_cast<GLsizei>(colored_offset_) < kTextureDepth);
+    printf("AddColored offset:%d, w: %d, h: %d\n", colored_offset_, width,
+           height);
 
-    // If there is no space left go down
-    if ((colored_xoffset_ + width) > kTextureWidth) {
-      colored_xoffset_ = 0;
-      colored_yoffset_ += (height * 2);
-    }
+    GLint level = 0, xoffset = 0, yoffset = 0;
+    GLsizei depth = 1;
 
-    auto x = colored_xoffset_;
-    auto y = colored_yoffset_;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, colored_texture_);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level, xoffset, yoffset,
+                    colored_offset_, width, height, depth, GL_BGRA,
+                    GL_UNSIGNED_BYTE, bitmap_buffer);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
-    printf("AddColored x:%d, y:%d\n", x, y);
+    colored_offset_++;
 
-    colored_texture_.SubImage2D(x, y, width, height, GL_RGBA, bitmap_buffer);
-
-    // Move right to occupy the next spot
-    colored_xoffset_ += width;
-
-    return glm::vec4(x / (GLfloat)kTextureWidth, y / (GLfloat)kTextureHeight,
-                     width / (GLfloat)kTextureWidth,
-                     height / (GLfloat)kTextureHeight);
+    auto v = glm::vec2(width / (GLfloat)coloredTextureWidth_,
+                       height / (GLfloat)coloredTextureHeight_);
+    return std::make_tuple(colored_texture_, colored_offset_ - 1, v);
   };
 
-  glm::vec4 AddMonochromatic(unsigned char *bitmap_buffer, GLsizei width,
-                             GLsizei height) {
-    assert(monochromatic_xoffset_ < kTextureWidth);
-    assert(monochromatic_yoffset_ < kTextureHeight);
+  std::tuple<GLuint, GLuint, glm::vec2> AddMonochromatic(
+      unsigned char *bitmap_buffer, GLsizei width, GLsizei height) {
+    assert(static_cast<GLsizei>(monochromatic_offset_) < kTextureDepth);
+    printf("AddMonochromatic offset:%d, w: %d, h: %d\n", monochromatic_offset_,
+           width, height);
 
-    // If there is no space left go down
-    if ((monochromatic_xoffset_ + width) > kTextureWidth) {
-      monochromatic_xoffset_ = 0;
-      monochromatic_yoffset_ += (height * 2);
-    }
-    auto x = monochromatic_xoffset_;
-    auto y = monochromatic_yoffset_;
+    GLint level = 0, xoffset = 0, yoffset = 0;
 
-    // TODO(andrea): this texture doesn't render without mipmaps, why? in theory
-    // the char
-    monochromatic_texture_.SubImage2D(x, y, width, height, GL_RGB,
-                                      bitmap_buffer);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, monochromatic_texture_);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level, xoffset, yoffset,
+                    monochromatic_offset_, width, height, 1, GL_RGB,
+                    GL_UNSIGNED_BYTE, bitmap_buffer);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
-    // Move right to occupy the next spot
-    monochromatic_xoffset_ += width;
+    monochromatic_offset_++;
 
-    return glm::vec4(x / (GLfloat)kTextureWidth, y / (GLfloat)kTextureHeight,
-                     width / (GLfloat)kTextureWidth,
-                     height / (GLfloat)kTextureHeight);
+    auto v = glm::vec2(width / (GLfloat)monochromaticTextureWidth_,
+                       height / (GLfloat)monochromaticTextureHeight_);
+    return std::make_tuple(monochromatic_texture_, monochromatic_offset_ - 1,
+                           v);
   };
-
-  GLuint getColoredTexture() const { return colored_texture_.GetId(); }
-  GLuint getMonochromaticTexture() const {
-    return monochromatic_texture_.GetId();
-  }
 };
+}  // namespace texture_atlas
 
 #endif

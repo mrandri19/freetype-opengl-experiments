@@ -1,8 +1,11 @@
 #ifndef LETTERA_UTIL_H
 #define LETTERA_UTIL_H
+
 #include <glad/glad.h>
 
 #define UNUSED __attribute__((unused))
+
+namespace util {
 
 void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
                             GLenum severity, GLsizei length UNUSED,
@@ -102,6 +105,8 @@ void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
 
   printf("%d: %s of %s severity, raised from %s: %s\n", id, _type.c_str(),
          _severity.c_str(), _source.c_str(), msg);
+  if (_severity == "HIGH" || _severity == "MEDIUM") assert(false);
 }
 
+}  // namespace util
 #endif

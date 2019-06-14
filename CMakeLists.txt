@@ -9,14 +9,21 @@ find_library(harfbuzz REQUIRED)
 include_directories(/usr/include/freetype2)
 include_directories(/usr/include/libpng16)
 include_directories(lib/glad/include)
+include_directories(lib/doctest/include)
 
 add_executable(opengl
   src/main.cc
   lib/glad/src/glad.c
 )
+add_executable(tests
+  test/all.cc
+)
 
 target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
+target_compile_options(tests PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
+
+
 
 # Try to find clang-tidy
 find_program(
@@ -36,6 +43,6 @@ set_target_properties(
   CXX_CLANG_TIDY "${DO_CLANG_TIDY}"
 )
 
-
+# If enabled, generates a compile_commands.json, used by clang-tidy
 set(CMAKE_EXPORT_COMPILE_COMMANDS)
 

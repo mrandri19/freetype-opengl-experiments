@@ -11,9 +11,9 @@ struct Window {
          GLFWscrollfun scrollCallback) {
     glfwInit();  // Init GLFW
 
-    // Require OpenGL >= 4.0
+    // Require OpenGL >= 4.6
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 
     // We want a context that only supports the new core functionality
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
