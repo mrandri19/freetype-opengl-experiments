@@ -33,16 +33,18 @@ class LRUFreshnessCache {
 
     auto it = queue_pos_.find(key);
 
-    queue_.push_front(key_value_pair_t(key, value));
-
     if (it != queue_pos_.end()) {
       queue_.erase(it->second);
       queue_pos_.erase(it);
     }
+
+    queue_.push_front(key_value_pair_t(key, value));
     queue_pos_[key] = queue_.begin();
 
-    fresh[key] = true;
-    fresh_count_++;
+    if (!fresh[key]) {
+      fresh[key] = true;
+      fresh_count_++;
+    }
 
     if (queue_pos_.size() > max_size_) {
       auto last = queue_.end();
