@@ -17,11 +17,12 @@
 #include <unordered_map>
 
 namespace texture_atlas {
+using std::pair;
+using std::unordered_map;
 using std::vector;
 
-static GLsizei kTextureDepth = 128;
-static GLsizei kColoredMipLevelCount =
-    2;  // TODO(andrea): change to 1, we arent using mipmap downscaling
+static GLsizei kTextureDepth = 4;
+static GLsizei kColoredMipLevelCount = 1;
 static GLsizei kMonochromaticMipLevelCount = 1;
 struct Character {
   size_t texture_array_index;
@@ -36,16 +37,16 @@ struct Character {
 };
 class TextureAtlas {
  private:
-  GLuint colored_offset_ = 0, monochromatic_offset_ = 0;
+  GLuint colored_index_ = 0, monochromatic_index_ = 0;
   GLuint colored_texture_, monochromatic_texture_;
   GLsizei coloredTextureWidth_, coloredTextureHeight_;
   GLsizei monochromaticTextureWidth_, monochromaticTextureHeight_;
 
-  std::unordered_map<hb_codepoint_t, Character> texture_cache_;
-  std::unordered_map<hb_codepoint_t, bool> fresh_;
+  unordered_map<hb_codepoint_t, Character> texture_cache_;
+  unordered_map<hb_codepoint_t, bool> fresh_;
 
-  std::pair<Character, vector<unsigned char>> RenderGlyph(
-      FT_Face face, hb_codepoint_t codepoint) {
+  pair<Character, vector<unsigned char>> RenderGlyph(FT_Face face,
+                                                     hb_codepoint_t codepoint) {
     FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
 
     if (FT_HAS_COLOR(face)) {
@@ -83,10 +84,10 @@ class TextureAtlas {
     } else {
       bitmap_buffer.resize(face->glyph->bitmap.rows *
                            face->glyph->bitmap.width * 4);
-      std::copy(face->glyph->bitmap.buffer,
-                face->glyph->bitmap.buffer +
-                    face->glyph->bitmap.rows * face->glyph->bitmap.width * 4,
-                bitmap_buffer.begin());
+      copy(face->glyph->bitmap.buffer,
+           face->glyph->bitmap.buffer +
+               face->glyph->bitmap.rows * face->glyph->bitmap.width * 4,
+           bitmap_buffer.begin());
     }
 
     GLsizei texture_width;
@@ -107,7 +108,7 @@ class TextureAtlas {
     ch.advance = static_cast<GLuint>(face->glyph->advance.x);
     ch.colored = static_cast<bool> FT_HAS_COLOR(face);
 
-    return std::make_pair(ch, bitmap_buffer);
+    return make_pair(ch, bitmap_buffer);
   }
 
  public:
@@ -151,9 +152,6 @@ class TextureAtlas {
   // TODO(andrea): InsertColored and InsertMonochromatic can be DRYed up
   void InsertColored(vector<unsigned char> bitmap_buffer, GLsizei width,
                      GLsizei height, Character* ch, GLuint colored_offset) {
-    printf("InsertColored offset:%d, w: %d, h: %d\n", colored_offset, width,
-           height);
-
     GLint level = 0, xoffset = 0, yoffset = 0;
     GLsizei depth = 1;
 
@@ -168,21 +166,19 @@ class TextureAtlas {
     ch->texture_id = colored_texture_;
     ch->texture_array_index = colored_offset;
     ch->texture_coordinates = v;
-    printf("InsertColored worked\n");
   };
 
   void InsertMonochromatic(vector<unsigned char> bitmap_buffer, GLsizei width,
                            GLsizei height, Character* ch,
                            GLuint monochromatic_offset) {
     assert(static_cast<GLsizei>(monochromatic_offset) < kTextureDepth);
-    printf("InsertMonochromatic offset:%d, w: %d, h: %d\n",
-           monochromatic_offset, width, height);
 
     GLint level = 0, xoffset = 0, yoffset = 0;
+    GLsizei depth = 1;
 
     glBindTexture(GL_TEXTURE_2D_ARRAY, monochromatic_texture_);
     glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level, xoffset, yoffset,
-                    monochromatic_offset, width, height, 1, GL_RGB,
+                    monochromatic_offset, width, height, depth, GL_RGB,
                     GL_UNSIGNED_BYTE, bitmap_buffer.data());
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 
@@ -193,39 +189,35 @@ class TextureAtlas {
     ch->texture_coordinates = v;
   };
 
-  Character Append(FT_Face face, hb_codepoint_t codepoint) {
-    auto ch = RenderGlyph(face, codepoint);
-    if (ch.first.colored) {
-      InsertColored(ch.second, ch.first.size.x, ch.first.size.y, &ch.first,
-                    colored_offset_++);
+  void Append(std::pair<Character, vector<unsigned char>>* p,
+              hb_codepoint_t codepoint) {
+    if (p->first.colored) {
+      InsertColored(p->second, p->first.size.x, p->first.size.y, &p->first,
+                    colored_index_++);
     } else {
-      InsertMonochromatic(ch.second, ch.first.size.x, ch.first.size.y,
-                          &ch.first, monochromatic_offset_++);
+      InsertMonochromatic(p->second, p->first.size.x, p->first.size.y,
+                          &p->first, monochromatic_index_++);
     }
 
-    texture_cache_[codepoint] = ch.first;
+    texture_cache_[codepoint] = p->first;
     fresh_[codepoint] = true;
-
-    return ch.first;
   };
 
-  Character Replace(hb_codepoint_t old, FT_Face face,
-                    hb_codepoint_t codepoint) {
-    auto ch = RenderGlyph(face, codepoint);
-    if (ch.first.colored) {
-      InsertColored(ch.second, ch.first.size.x, ch.first.size.y, &ch.first,
-                    texture_cache_[old].texture_array_index);
+  void Replace(std::pair<Character, vector<unsigned char>>* p,
+               hb_codepoint_t stale, hb_codepoint_t codepoint) {
+    if (p->first.colored) {
+      InsertColored(p->second, p->first.size.x, p->first.size.y, &p->first,
+                    texture_cache_[stale].texture_array_index);
     } else {
-      InsertMonochromatic(ch.second, ch.first.size.x, ch.first.size.y,
-                          &ch.first, texture_cache_[old].texture_array_index);
+      InsertMonochromatic(p->second, p->first.size.x, p->first.size.y,
+                          &p->first, texture_cache_[stale].texture_array_index);
     }
 
-    texture_cache_.erase(old);
-    fresh_.erase(old);
-    texture_cache_[codepoint] = ch.first;
-    fresh_[codepoint] = true;
+    texture_cache_.erase(stale);
+    fresh_.erase(stale);
 
-    return ch.first;
+    texture_cache_[codepoint] = p->first;
+    fresh_[codepoint] = true;
   };
 
   bool IsFull() const {
@@ -241,13 +233,11 @@ class TextureAtlas {
     return texture_cache_.find(codepoint) != texture_cache_.end();
   };
 
-  // TODO(andrea): sacrificare capretto
   Character GetOrInsert(FT_Face face, hb_codepoint_t codepoint) {
     assert(texture_cache_.size() == fresh_.size());
-
     assert(!IsFull() || Contains_stale());
 
-    printf("GetOrInsert called, size: %zu\n", texture_cache_.size());
+    printf("GetOrInsert called, size: %zu\t", texture_cache_.size());
 
     auto it = texture_cache_.find(codepoint);
     if (it != texture_cache_.end()) {
@@ -255,23 +245,28 @@ class TextureAtlas {
       fresh_[codepoint] = true;
       return it->second;
     } else {
-      printf("codepoint not found\n");
+      auto ch = RenderGlyph(face, codepoint);
+      // TODO(andrea): finish
+
+      printf("codepoint not found\t");
       if (!IsFull()) {
-        printf("there is space, appending\n");
-        return Append(face, codepoint);
+        printf("appending\n");
+        Append(&ch, codepoint);
+        return ch.first;
       } else {
-        printf("there isnt't space but stale spots, replacing\n");
         // Find the first stale one
         bool found = false;
-        hb_codepoint_t key;
+        hb_codepoint_t stale;
         for (auto& kv : fresh_) {
-          if (kv.second == 0) {
-            key = kv.first;
+          if (kv.second == false) {
+            stale = kv.first;
             found = true;
           }
         }
         assert(found);
-        return Replace(key, face, codepoint);
+        printf("replacing %d\n", stale);
+        Replace(&ch, stale, codepoint);
+        return ch.first;
       }
     }
   };

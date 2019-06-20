@@ -79,6 +79,8 @@ struct State {
   size_t visible_lines;
 } state;
 
+bool paused;
+
 void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
                  int mods UNUSED) {
   if ((key == GLFW_KEY_DOWN || key == GLFW_KEY_J) &&
@@ -95,6 +97,10 @@ void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
   }
   if ((key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, true);
+    paused = false;
+  }
+  if ((key == GLFW_KEY_N) && action == GLFW_PRESS) {
+    paused = false;
   }
 }
 
@@ -282,7 +288,7 @@ void RenderLine(
     while ((texture_atlas->Contains_stale() || !texture_atlas->IsFull()) &&
            i < codepoint_in_line) {
       hb_codepoint_t codepoint = codepoints_face_pair.second[i];
-      printf("i=%zu, Rendering codepoint %d\n", i, codepoint);
+      printf("i=%zu, Rendering codepoint %d\t", i, codepoint);
 
       FT_Face face = get<0>(faces[codepoints_face_pair.first[i]]);
 
@@ -419,7 +425,7 @@ void RenderLine(
 
   glBindVertexArray(0);
 
-  printf("\n\n\nFinished rendering line\n\n\n");
+  printf("\nFinished rendering line\n\n");
 }
 
 void Render(const Shader &shader, const vector<string> &lines,
@@ -459,6 +465,8 @@ void Render(const Shader &shader, const vector<string> &lines,
     RenderLine(codepoints_face_pair, faces, x, y, kFontZoom, shader,
                texture_atlas);
   }
+  printf(
+      "\n**********************Finished rendering frame****************\n\n");
 
   // Destroy the shaping buffer
   hb_buffer_destroy(buf);
@@ -561,7 +569,13 @@ int main(int argc UNUSED, char **argv) {
 
     // Swap buffers when drawing is finished
     glfwSwapBuffers(window.window);
-    glfwWaitEvents();
+
+    paused = true;
+
+    while (true) {
+      glfwWaitEvents();
+      if (!paused) break;
+    }
   }
 
   for (auto &face : faces) {
