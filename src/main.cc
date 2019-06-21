@@ -387,8 +387,12 @@ void RenderLine(
       }
     }
 
+    // TODO(andrea): instead of allocating on each line, allocate externally and
+    // eventually resize here
     vector<array<array<GLfloat, 4>, 6>> quads;
+    quads.reserve(characters.size());
     vector<array<GLuint, 2>> texture_ids;
+    texture_ids.reserve(characters.size() * 6);
 
     for (texture_atlas::Character &ch : characters) {
       // Calculate the character position
@@ -417,6 +421,7 @@ void RenderLine(
 
         advance = (ch.advance >> 6) * scale;
       }
+      x += advance;
 
       auto tc = ch.texture_coordinates;
 
@@ -442,10 +447,6 @@ void RenderLine(
       array<GLuint, 2> texture_id = {
           static_cast<GLuint>(ch.texture_array_index),
           static_cast<GLuint>(ch.colored)};
-
-      // Now advance cursors for next glyph (note that advance is number of
-      // 1 / 64 pixels)
-      x += advance;
 
       quads.push_back(quad);
       texture_ids.push_back(texture_id);
@@ -479,7 +480,7 @@ void RenderLine(
       // Load quads
       GLintptr offset = 0;
       GLsizeiptr quads_byte_size = quads.size() * (sizeof(quads[0]));
-      glBufferSubData(GL_ARRAY_BUFFER, offset, quads_byte_size, &quads[0]);
+      glBufferSubData(GL_ARRAY_BUFFER, offset, quads_byte_size, quads.data());
 
       // Load texture_ids
       offset = quads_byte_size;

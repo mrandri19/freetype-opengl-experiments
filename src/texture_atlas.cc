@@ -11,7 +11,6 @@ TextureAtlas::TextureAtlas(GLsizei textureWidth, GLsizei textureHeight,
     : textureWidth_(textureWidth),
       textureHeight_(textureHeight),
       texture_cache_(kTextureDepth),
-      fresh_(kTextureDepth),
       format_(format) {
   glGenTextures(1, &texture_);
   glBindTexture(GL_TEXTURE_2D_ARRAY, texture_);
@@ -53,20 +52,21 @@ void TextureAtlas::Append(std::pair<Character, vector<unsigned char>>* p,
                           hb_codepoint_t codepoint) {
   Insert(p->second, p->first.size.x, p->first.size.y, &p->first, index_++);
 
-  texture_cache_[codepoint] = p->first;
-  fresh_[codepoint] = true;
+  auto& item = texture_cache_[codepoint];
+  item.character = p->first;
+  item.fresh = true;
 }
 
 void TextureAtlas::Replace(std::pair<Character, vector<unsigned char>>* p,
                            hb_codepoint_t stale, hb_codepoint_t codepoint) {
   Insert(p->second, p->first.size.x, p->first.size.y, &p->first,
-         texture_cache_[stale].texture_array_index);
+         texture_cache_[stale].character.texture_array_index);
 
   texture_cache_.erase(stale);
-  fresh_.erase(stale);
 
-  texture_cache_[codepoint] = p->first;
-  fresh_[codepoint] = true;
+  auto& item = texture_cache_[codepoint];
+  item.character = p->first;
+  item.fresh = true;
 }
 
 bool TextureAtlas::Contains(hb_codepoint_t codepoint) const {
@@ -76,15 +76,14 @@ bool TextureAtlas::Contains(hb_codepoint_t codepoint) const {
 Character* TextureAtlas::Get(hb_codepoint_t codepoint) {
   auto it = texture_cache_.find(codepoint);
   if (it != texture_cache_.end()) {
-    fresh_[codepoint] = true;
-    return &it->second;
+    it->second.fresh = true;
+    return &(it->second.character);
   }
   return nullptr;
 }
 
 void TextureAtlas::Insert(hb_codepoint_t codepoint,
                           pair<Character, vector<unsigned char>>& ch) {
-  assert(texture_cache_.size() == fresh_.size());
   assert(!IsFull() || Contains_stale());
 
   if (!IsFull()) {
@@ -93,8 +92,8 @@ void TextureAtlas::Insert(hb_codepoint_t codepoint,
     // Find the first stale one
     bool found = false;
     hb_codepoint_t stale;
-    for (auto& kv : fresh_) {
-      if (kv.second == false) {
+    for (auto& kv : texture_cache_) {
+      if (kv.second.fresh == false) {
         stale = kv.first;
         found = true;
       }
@@ -109,15 +108,15 @@ bool TextureAtlas::IsFull() const {
 }
 
 bool TextureAtlas::Contains_stale() const {
-  for (auto& kv : fresh_) {
-    if (!kv.second) return true;
+  for (auto& kv : texture_cache_) {
+    if (!kv.second.fresh) return true;
   }
   return false;
 }
 
 void TextureAtlas::Invalidate() {
-  for (auto& kv : fresh_) {
-    kv.second = false;
+  for (auto& kv : texture_cache_) {
+    kv.second.fresh = false;
   }
 }
 

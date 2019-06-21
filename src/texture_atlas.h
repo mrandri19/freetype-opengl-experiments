@@ -42,12 +42,16 @@ struct Character {
 
 class TextureAtlas {
  private:
+  typedef struct {
+    Character character;
+    bool fresh;
+  } cache_element_t;
+
   GLuint index_ = 0;
   GLuint texture_;
   GLsizei textureWidth_, textureHeight_;
 
-  unordered_map<hb_codepoint_t, Character> texture_cache_;
-  unordered_map<hb_codepoint_t, bool> fresh_;
+  unordered_map<hb_codepoint_t, cache_element_t> texture_cache_;
   GLenum format_;
 
  public:
