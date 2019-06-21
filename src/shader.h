@@ -1,5 +1,7 @@
-#ifndef LETTERA_SHADER_H
-#define LETTERA_SHADER_H
+// Copyright 2019 <Andrea Cognolato>
+
+#ifndef SRC_SHADER_H_
+#define SRC_SHADER_H_
 
 #include <glad/glad.h>
 
@@ -96,4 +98,4 @@ class Shader {
   void use() { glUseProgram(programId); }
 };
 
-#endif
+#endif  // SRC_SHADER_H_

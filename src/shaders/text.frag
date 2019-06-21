@@ -17,6 +17,8 @@ layout(location = 0, index = 1) out vec4 colorMask;
 void main()
 {
     vec4 alpha_map;
+
+    // If it's colored
     if(ex_texture_ids.y==1) {
         alpha_map = texture(colored_texture_array, vec3(ex_texCoords, ex_texture_ids.x));
         color = alpha_map;

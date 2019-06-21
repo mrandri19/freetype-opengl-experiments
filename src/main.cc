@@ -1,3 +1,4 @@
+// Copyright 2019 <Andrea Cognolato>
 // TODO(andrea): subpixel positioning (si puo' fare con freetype? lo fa gia?)
 // TODO(andrea): statically link glfw, harfbuzz; making sure that both are
 // TODO(andrea): benchmark startup time (500ms on emoji file, wtf)
@@ -6,6 +7,20 @@
 // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
 // 👚🔇🐕🏠 📗🍢💵📏🐁🌓 💼🐦👠
 
+// glad - OpenGL loader
+#include <glad/glad.h>
+// FreeType
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_LCD_FILTER_H
+
+#include <GLFW/glfw3.h>
+
+// HarfBuzz
+#include <harfbuzz/hb.h>
+// HarfBuzz FreeTpe
+#include <harfbuzz/hb-ft.h>
+
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -13,28 +28,15 @@
 #include <unordered_map>
 #include <vector>
 
-// glad - OpenGL loader
-#include <glad/glad.h>
-
 // glm - OpenGL mathematics
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include "shader.h"
-#include "texture_atlas.h"
-#include "util.h"
-#include "window.h"
-
-// FreeType
-#include <ft2build.h>
-#include FT_FREETYPE_H
-#include FT_LCD_FILTER_H
-
-// HarfBuzz
-#include <harfbuzz/hb.h>
-// HarfBuzz FreeTpe
-#include <harfbuzz/hb-ft.h>
+#include "./shader.h"
+#include "./texture_atlas.h"
+#include "./util.h"
+#include "./window.h"
 
 namespace font_renderer {
 using std::array;
@@ -56,10 +58,11 @@ static const int kFontPixelWidth = kFontPixelHeight - 1;
 static const float kFontZoom = 1;
 static const int kLineHeight =
     static_cast<int>(kFontPixelHeight * 1.35);  // Copied from VSCode's code
-static const string kWindowTitle = "OpenGL";
+static const char kWindowTitle[] = "OpenGL";
 
-#define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
+// Dark+
 #define FOREGROUND_COLOR 220. / 255, 218. / 255, 172. / 255, 1.0f
+#define BACKGROUND_COLOR 35. / 255, 35. / 255, 35. / 255, 1.0f
 
 const hb_codepoint_t CODEPOINT_MISSING_FACE = UINT32_MAX;
 const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
@@ -270,33 +273,118 @@ void InitOpenGL() {
   glDebugMessageCallback(util::GLDebugMessageCallback, nullptr);
 }
 
+pair<texture_atlas::Character, vector<unsigned char>> RenderGlyph(
+    FT_Face face, hb_codepoint_t codepoint) {
+  FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
+
+  if (FT_HAS_COLOR(face)) {
+    flags |= FT_LOAD_COLOR;
+  }
+
+  if (FT_Load_Glyph(face, codepoint, flags)) {
+    fprintf(stderr, "Could not load glyph with codepoint: %u\n", codepoint);
+    exit(EXIT_FAILURE);
+  }
+
+  if (!FT_HAS_COLOR(face)) {
+    if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_LCD)) {
+      fprintf(stderr, "Could not render glyph with codepoint: %u\n", codepoint);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  vector<unsigned char> bitmap_buffer;
+  if (!FT_HAS_COLOR(face)) {
+    // face->glyph->bitmap.buffer is a rows * pitch matrix but we need a
+    // matrix which is rows * width. For each row i, buffer[i][pitch] is
+    // just a padding byte, therefore we can ignore it
+
+    bitmap_buffer.resize(face->glyph->bitmap.rows * face->glyph->bitmap.width *
+                         3);
+    for (uint i = 0; i < face->glyph->bitmap.rows; i++) {
+      for (uint j = 0; j < face->glyph->bitmap.width; j++) {
+        unsigned char ch =
+            face->glyph->bitmap.buffer[i * face->glyph->bitmap.pitch + j];
+        bitmap_buffer[i * face->glyph->bitmap.width + j] = ch;
+      }
+    }
+  } else {
+    bitmap_buffer.resize(face->glyph->bitmap.rows * face->glyph->bitmap.width *
+                         4);
+    copy(face->glyph->bitmap.buffer,
+         face->glyph->bitmap.buffer +
+             face->glyph->bitmap.rows * face->glyph->bitmap.width * 4,
+         bitmap_buffer.begin());
+  }
+
+  GLsizei texture_width;
+  GLsizei texture_height;
+  if (FT_HAS_COLOR(face)) {
+    texture_width = face->glyph->bitmap.width;
+    texture_height = face->glyph->bitmap.rows;
+  } else {
+    // If the glyph is not colored then it is subpixel antialiased so the
+    // texture will have 3x the width
+    texture_width = face->glyph->bitmap.width / 3;
+    texture_height = face->glyph->bitmap.rows;
+  }
+
+  texture_atlas::Character ch;
+  ch.size = glm::ivec2(texture_width, texture_height);
+  ch.bearing = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top);
+  ch.advance = static_cast<GLuint>(face->glyph->advance.x);
+  ch.colored = static_cast<bool> FT_HAS_COLOR(face);
+
+  return make_pair(ch, bitmap_buffer);
+}
+
 void RenderLine(
     const pair<vector<size_t>, vector<hb_codepoint_t>> &codepoints_face_pair,
     const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces, GLfloat x, GLfloat y,
-    GLfloat scale, const Shader &shader, TextureAtlas *texture_atlas) {
+    GLfloat scale, const Shader &shader,
+    const vector<TextureAtlas *> &texture_atlases) {
   glBindVertexArray(VAO);
 
-  size_t codepoint_in_line = codepoints_face_pair.first.size();
+  size_t codepoints_in_line = codepoints_face_pair.first.size();
   size_t i = 0;
 
   // While I haven't rendered all codepoints
-  while (i < codepoint_in_line) {
+  while (i < codepoints_in_line) {
     vector<texture_atlas::Character> characters;
 
-    // While the atlas isn't full or an item can be replaced and I haven't
-    // rendered all codepoints
-    while ((texture_atlas->Contains_stale() || !texture_atlas->IsFull()) &&
-           i < codepoint_in_line) {
+    for (; i < codepoints_in_line; ++i) {
       hb_codepoint_t codepoint = codepoints_face_pair.second[i];
-      printf("i=%zu, Rendering codepoint %d\t", i, codepoint);
 
-      FT_Face face = get<0>(faces[codepoints_face_pair.first[i]]);
+      texture_atlas::Character *ch = texture_atlases[0]->Get(codepoint);
+      if (ch != nullptr) {
+        characters.push_back(*ch);
+        continue;
+      }
 
-      // Get its texture's coordinates and offset from the atlas
-      texture_atlas::Character ch = texture_atlas->GetOrInsert(face, codepoint);
-      characters.push_back(ch);
+      ch = texture_atlases[1]->Get(codepoint);
+      if (ch != nullptr) {
+        characters.push_back(*ch);
+        continue;
+      }
 
-      ++i;
+      // If I have got space in both
+      if ((texture_atlases[0]->Contains_stale() ||
+           !texture_atlases[0]->IsFull()) &&
+          (texture_atlases[1]->Contains_stale() ||
+           !texture_atlases[1]->IsFull())) {
+        FT_Face face = get<0>(faces[codepoints_face_pair.first[i]]);
+
+        // Get its texture's coordinates and offset from the atlas
+        auto p = RenderGlyph(face, codepoint);
+        if (p.first.colored) {
+          texture_atlases[1]->Insert(codepoint, p);
+        } else {
+          texture_atlases[0]->Insert(codepoint, p);
+        }
+        characters.push_back(p.first);
+      } else {
+        break;
+      }
     }
 
     vector<array<array<GLfloat, 4>, 6>> quads;
@@ -351,11 +439,12 @@ void RenderLine(
                                            {xpos, ypos + h, 0, 0},
                                            {xpos + w, ypos, tc.x, tc.y},
                                            {xpos + w, ypos + h, tc.x, 0}}};
-      // TODO(andrea): fix
       array<GLuint, 2> texture_id = {
           static_cast<GLuint>(ch.texture_array_index),
-          static_cast<GLuint>(ch.texture_id)};
+          static_cast<GLuint>(ch.colored)};
 
+      // Now advance cursors for next glyph (note that advance is number of
+      // 1 / 64 pixels)
       x += advance;
 
       quads.push_back(quad);
@@ -375,12 +464,10 @@ void RenderLine(
                  glm::value_ptr(fg_color));
 
     // Bind the texture to the active texture unit
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_ARRAY,
-                  texture_atlas->GetMonochromaticTexture());
-
-    glActiveTexture(GL_TEXTURE0 + 1);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, texture_atlas->GetColoredTexture());
+    for (size_t j = 0; j < texture_atlases.size(); j++) {
+      glActiveTexture(GL_TEXTURE0 + j);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, texture_atlases[j]->GetTexture());
+    }
 
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     {
@@ -408,7 +495,7 @@ void RenderLine(
 
       // Tell shader that layout=1 is an ivec2 starting after quads_byte_size
       glVertexAttribIPointer(1, 2, GL_UNSIGNED_INT, 2 * sizeof(GLuint),
-                             (void *)offset);
+                             reinterpret_cast<const GLvoid *>(offset));
       glEnableVertexAttribArray(1);
     }
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -417,22 +504,20 @@ void RenderLine(
     glDrawArrays(GL_TRIANGLES, 0, characters.size() * sizeof(characters[0]));
 
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-    // Now advance cursors for next glyph (note that advance is number of
-    // 1 / 64 pixels)
 
-    texture_atlas->Invalidate();
+    for (size_t j = 0; j < texture_atlases.size(); j++) {
+      texture_atlases[j]->Invalidate();
+    }
   }
 
   glBindVertexArray(0);
-
-  printf("\nFinished rendering line\n\n");
 }
 
 void Render(const Shader &shader, const vector<string> &lines,
             const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces,
             unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
                 *shaping_cache,
-            TextureAtlas *texture_atlas) {
+            const vector<TextureAtlas *> &texture_atlases) {
   // Set background color
   glClearColor(BACKGROUND_COLOR);
   glClear(GL_COLOR_BUFFER_BIT);
@@ -463,10 +548,8 @@ void Render(const Shader &shader, const vector<string> &lines,
     // Render the line to the screen, given the faces, the codepoints, the
     // codepoint's textures and a texture atlas
     RenderLine(codepoints_face_pair, faces, x, y, kFontZoom, shader,
-               texture_atlas);
+               texture_atlases);
   }
-  printf(
-      "\n**********************Finished rendering frame****************\n\n");
 
   // Destroy the shaping buffer
   hb_buffer_destroy(buf);
@@ -481,11 +564,6 @@ int main(int argc UNUSED, char **argv) {
   // Compile and link the shaders
   Shader shader("src/shaders/text.vert", "src/shaders/text.frag");
   shader.use();
-  glUniform1i(
-      glGetUniformLocation(shader.programId, "monochromatic_texture_array"), 0);
-
-  glUniform1i(glGetUniformLocation(shader.programId, "colored_texture_array"),
-              1);
 
   // https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
   // TODO(andrea): understand WHY it works, and if this is an actual solution,
@@ -534,13 +612,22 @@ int main(int argc UNUSED, char **argv) {
     assert(lines.size() > 0);
   }
 
-  vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+  // vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+  vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
 
   vector<tuple<FT_Face, GLsizei, GLsizei>> faces = LoadFaces(ft, face_names);
 
   // TODO(andrea): make this support multiple fonts
-  TextureAtlas texture_atlas(get<1>(faces[1]), get<2>(faces[1]),
-                             get<1>(faces[0]), get<2>(faces[0]));
+  TextureAtlas monochrome_texture_atlas(
+      get<1>(faces[0]), get<2>(faces[0]), shader.programId,
+      "monochromatic_texture_array", GL_RGB8, GL_RGB, 0);
+  TextureAtlas colored_texture_atlas(get<1>(faces[1]), get<2>(faces[1]),
+                                     shader.programId, "colored_texture_array",
+                                     GL_RGBA8, GL_BGRA, 1);
+
+  vector<TextureAtlas *> texture_atlases;
+  texture_atlases.push_back(&monochrome_texture_atlas);
+  texture_atlases.push_back(&colored_texture_atlas);
 
   // TODO(andrea): handle changing viewport
   // Render only the lines visible in the viewport
@@ -559,7 +646,7 @@ int main(int argc UNUSED, char **argv) {
   while (!glfwWindowShouldClose(window.window)) {
     auto t1 = std::chrono::high_resolution_clock::now();
 
-    Render(shader, lines, faces, &shaping_cache, &texture_atlas);
+    Render(shader, lines, faces, &shaping_cache, texture_atlases);
 
     auto t2 = std::chrono::high_resolution_clock::now();
     auto time_span =
@@ -572,10 +659,10 @@ int main(int argc UNUSED, char **argv) {
 
     paused = true;
 
-    while (true) {
-      glfwWaitEvents();
-      if (!paused) break;
-    }
+    // while (true) {
+    glfwWaitEvents();
+    // if (!paused) break;
+    // }
   }
 
   for (auto &face : faces) {

@@ -1,7 +1,10 @@
-#ifndef LETTERA_UTIL_H
-#define LETTERA_UTIL_H
+// Copyright 2019 <Andrea Cognolato>
+#ifndef SRC_UTIL_H_
+#define SRC_UTIL_H_
 
 #include <glad/glad.h>
+
+#include <string>
 
 #define UNUSED __attribute__((unused))
 
@@ -109,4 +112,4 @@ void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
 }
 
 }  // namespace util
-#endif
+#endif  //  SRC_UTIL_H_

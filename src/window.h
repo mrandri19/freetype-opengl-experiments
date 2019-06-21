@@ -1,7 +1,11 @@
-#ifndef LETTERA_WINDOW_H
-#define LETTERA_WINDOW_H
+// Copyright 2019 <Andrea Cognolato>
+
+#ifndef SRC_WINDOW_H_
+#define SRC_WINDOW_H_
 
 #include <GLFW/glfw3.h>
+
+#include <string>
 using std::string;
 
 struct Window {
@@ -42,4 +46,4 @@ struct Window {
   Window& operator=(const Window&) = delete;
 };
 
-#endif  // LETTERA_WINDOW_H
+#endif  // SRC_WINDOW_H_

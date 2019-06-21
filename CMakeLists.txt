@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.0.0)
 project(opengl VERSION 0.1.0)
 
+set(CMAKE_VERBOSE_MAKEFILE ON CACHE BOOL "ON")
+
+
 find_library(glfw3 REQUIRED)
 find_library(freetype2 REQUIRED)
 find_library(libpng16 REQUIRED)
@@ -9,20 +12,15 @@ find_library(harfbuzz REQUIRED)
 include_directories(/usr/include/freetype2)
 include_directories(/usr/include/libpng16)
 include_directories(lib/glad/include)
-include_directories(lib/doctest/include)
 
 add_executable(opengl
   src/main.cc
+  src/texture_atlas.cc
   lib/glad/src/glad.c
-)
-add_executable(tests
-  test/all.cc
 )
 
 target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
-target_compile_options(tests PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
-
 
 
 # Try to find clang-tidy
