@@ -1,4 +1,6 @@
 // Copyright 2019 <Andrea Cognolato>
+// TODO(andrea): use a better map, try in some way to have dynamic gpu memory
+// allocation, find a better data structure
 #ifndef SRC_TEXTURE_ATLAS_H_
 #define SRC_TEXTURE_ATLAS_H_
 
@@ -75,7 +77,7 @@ class TextureAtlas {
 
   Character* Get(hb_codepoint_t codepoint);
   void Insert(hb_codepoint_t codepoint,
-              pair<Character, vector<unsigned char>>& ch);
+              pair<Character, vector<unsigned char>>* ch);
 
   pair<Character, vector<unsigned char>> RenderGlyph(FT_Face face,
                                                      hb_codepoint_t codepoint);

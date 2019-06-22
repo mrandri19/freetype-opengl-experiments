@@ -371,9 +371,9 @@ void RenderLine(
         // Get its texture's coordinates and offset from the atlas
         auto p = RenderGlyph(face, codepoint);
         if (p.first.colored) {
-          texture_atlases[1]->Insert(codepoint, p);
+          texture_atlases[1]->Insert(codepoint, &p);
         } else {
-          texture_atlases[0]->Insert(codepoint, p);
+          texture_atlases[0]->Insert(codepoint, &p);
         }
         characters.push_back(p.first);
       } else {
@@ -605,8 +605,8 @@ int main(int argc UNUSED, char **argv) {
     assert(lines.size() > 0);
   }
 
-  // vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
-  vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
+  vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
+  // vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
 
   vector<tuple<FT_Face, GLsizei, GLsizei>> faces = LoadFaces(ft, face_names);
 

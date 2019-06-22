@@ -83,11 +83,11 @@ Character* TextureAtlas::Get(hb_codepoint_t codepoint) {
 }
 
 void TextureAtlas::Insert(hb_codepoint_t codepoint,
-                          pair<Character, vector<unsigned char>>& ch) {
+                          pair<Character, vector<unsigned char>>* ch) {
   assert(!IsFull() || Contains_stale());
 
   if (!IsFull()) {
-    Append(&ch, codepoint);
+    Append(ch, codepoint);
   } else {
     // Find the first stale one
     bool found = false;
@@ -99,7 +99,7 @@ void TextureAtlas::Insert(hb_codepoint_t codepoint,
       }
     }
     assert(found);
-    Replace(&ch, stale, codepoint);
+    Replace(ch, stale, codepoint);
   }
 }
 
