@@ -51,8 +51,8 @@ using std::unordered_map;
 using std::vector;
 using texture_atlas::TextureAtlas;
 
-static const int kWindowWidth = 1024;
-static const int kWindowHeight = 768;
+static const int kInitialWindowWidth = 1024;
+static const int kInitialWindowHeight = 768;
 static const int kFontPixelHeight = 17;
 static const int kFontPixelWidth = kFontPixelHeight - 1;
 static const float kFontZoom = 1;
@@ -69,24 +69,36 @@ const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
 
 GLuint VAO, VBO;
 
+typedef struct {
+  GLuint shader_program_id;
+  const vector<string> *lines;
+} glfw_user_pointer_t;
+
 struct State {
   size_t width;
   size_t height;
 
-  size_t kLineHeight;
+  size_t line_height;
 
-  size_t lines;
+  size_t lines_count;
 
   ssize_t start_line;  // must be signed to avoid underflow when subtracting 1
                        // to check if we can go up
   size_t visible_lines;
+
+  void update(const vector<string> &lines) {
+    lines_count = lines.size();
+    start_line = 0;
+    visible_lines =
+        min(lines_count, static_cast<size_t>(ceil(height / line_height)));
+  }
 } state;
 
 void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
                  int mods UNUSED) {
   if ((key == GLFW_KEY_DOWN || key == GLFW_KEY_J) &&
       (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-    if ((state.start_line + state.visible_lines + 1) <= state.lines) {
+    if ((state.start_line + state.visible_lines + 1) <= state.lines_count) {
       state.start_line++;
     }
   }
@@ -98,6 +110,13 @@ void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
   }
   if ((key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, true);
+  }
+
+  if ((key == GLFW_KEY_HOME) && action == GLFW_PRESS) {
+    state.start_line = 0;
+  }
+  if ((key == GLFW_KEY_END) && action == GLFW_PRESS) {
+    state.start_line = state.lines_count - state.visible_lines;
   }
 }
 
@@ -111,10 +130,24 @@ void ScrollCallback(GLFWwindow *window UNUSED, double xoffset UNUSED,
   } else {  // going down
     lines_to_scroll = -lines_to_scroll;
     if ((state.start_line + state.visible_lines + lines_to_scroll) <=
-        state.lines) {
+        state.lines_count) {
       state.start_line += lines_to_scroll;
     }
   }
+}
+
+void ResizeCallback(GLFWwindow *window UNUSED, int width, int height) {
+  glfw_user_pointer_t *obj =
+      static_cast<glfw_user_pointer_t *>(glfwGetWindowUserPointer(window));
+  glViewport(0, 0, width, height);
+  glm::mat4 projection = glm::ortho(0.0f, static_cast<GLfloat>(width), 0.0f,
+                                    static_cast<GLfloat>(height));
+  glUniformMatrix4fv(glGetUniformLocation(obj->shader_program_id, "projection"),
+                     1, GL_FALSE, glm::value_ptr(projection));
+
+  state.width = width;
+  state.height = height;
+  state.update(*obj->lines);
 }
 
 vector<tuple<FT_Face, GLsizei, GLsizei>> LoadFaces(
@@ -535,8 +568,8 @@ void Render(const Shader &shader, const vector<string> &lines,
     }
 
     auto x = 0;
-    auto y = kWindowHeight -
-             (kLineHeight * kFontZoom * ((i - state.start_line) + 1));
+    auto y = state.height -
+             (state.line_height * kFontZoom * ((i - state.start_line) + 1));
 
     // Render the line to the screen, given the faces, the codepoints, the
     // codepoint's textures and a texture atlas
@@ -549,14 +582,19 @@ void Render(const Shader &shader, const vector<string> &lines,
 }
 
 int main(int argc UNUSED, char **argv) {
-  Window window(kWindowWidth, kWindowHeight, kWindowTitle, KeyCallback,
-                ScrollCallback);
+  Window window(kInitialWindowWidth, kInitialWindowHeight, kWindowTitle,
+                KeyCallback, ScrollCallback, ResizeCallback);
 
   InitOpenGL();
 
   // Compile and link the shaders
   Shader shader("src/shaders/text.vert", "src/shaders/text.frag");
   shader.use();
+
+  glfw_user_pointer_t glfw_user_pointer;
+  glfwSetWindowUserPointer(window.window, &glfw_user_pointer);
+
+  glfw_user_pointer.shader_program_id = shader.programId;
 
   // https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
   // TODO(andrea): understand WHY it works, and if this is an actual solution,
@@ -565,7 +603,7 @@ int main(int argc UNUSED, char **argv) {
   glBlendFunc(GL_SRC1_COLOR, GL_ONE_MINUS_SRC1_COLOR);
 
   // Set the viewport
-  glViewport(0, 0, kWindowWidth, kWindowHeight);
+  glViewport(0, 0, kInitialWindowWidth, kInitialWindowHeight);
 
   // Disable byte-alignment restriction (our textures' size is not a multiple of
   // 4)
@@ -580,8 +618,9 @@ int main(int argc UNUSED, char **argv) {
     glBindVertexArray(0);
   }
 
-  glm::mat4 projection = glm::ortho(0.0f, static_cast<GLfloat>(kWindowWidth),
-                                    0.0f, static_cast<GLfloat>(kWindowHeight));
+  glm::mat4 projection =
+      glm::ortho(0.0f, static_cast<GLfloat>(kInitialWindowWidth), 0.0f,
+                 static_cast<GLfloat>(kInitialWindowHeight));
   glUniformMatrix4fv(glGetUniformLocation(shader.programId, "projection"), 1,
                      GL_FALSE, glm::value_ptr(projection));
 
@@ -604,6 +643,7 @@ int main(int argc UNUSED, char **argv) {
     }
     assert(lines.size() > 0);
   }
+  glfw_user_pointer.lines = &lines;
 
   vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
   // vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
@@ -624,19 +664,18 @@ int main(int argc UNUSED, char **argv) {
 
   // TODO(andrea): handle changing viewport
   // Render only the lines visible in the viewport
-  state.width = kWindowWidth;
-  state.height = kWindowHeight;
-  state.kLineHeight = kLineHeight;
-  state.lines = lines.size();
-  state.start_line = 0;
-  state.visible_lines =
-      min(lines.size(), static_cast<size_t>(ceil(kWindowHeight / kLineHeight)));
+  state.width = kInitialWindowWidth;
+  state.height = kInitialWindowHeight;
+  state.line_height = kLineHeight;
+  state.update(lines);
 
   // TODO(andrea): invalidation and capacity logic (LRU?, Better Hashmap?)
   unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
-      shaping_cache(state.lines);
+      shaping_cache(state.lines_count);
 
   while (!glfwWindowShouldClose(window.window)) {
+    glfwWaitEvents();
+
     auto t1 = std::chrono::high_resolution_clock::now();
 
     Render(shader, lines, faces, &shaping_cache, texture_atlases);
@@ -649,8 +688,6 @@ int main(int argc UNUSED, char **argv) {
 
     // Swap buffers when drawing is finished
     glfwSwapBuffers(window.window);
-
-    glfwWaitEvents();
   }
 
   for (auto &face : faces) {

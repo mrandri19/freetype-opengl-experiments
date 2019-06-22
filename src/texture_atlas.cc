@@ -2,6 +2,8 @@
 #include "./texture_atlas.h"
 
 namespace texture_atlas {
+static GLsizei kTextureDepth = 1024;
+static GLsizei kMipLevelCount = 1;
 
 TextureAtlas::TextureAtlas(GLsizei textureWidth, GLsizei textureHeight,
                            GLuint shaderProgramId,

@@ -27,8 +27,6 @@ using std::pair;
 using std::unordered_map;
 using std::vector;
 
-static GLsizei kTextureDepth = 1024;
-static GLsizei kMipLevelCount = 1;
 
 struct Character {
   size_t texture_array_index;

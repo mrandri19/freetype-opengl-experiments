@@ -12,7 +12,7 @@ struct Window {
   GLFWwindow* window;
 
   Window(int width, int height, const string& title, GLFWkeyfun keyCallback,
-         GLFWscrollfun scrollCallback) {
+         GLFWscrollfun scrollCallback, GLFWframebuffersizefun resizeCallback) {
     glfwInit();  // Init GLFW
 
     // Require OpenGL >= 4.6
@@ -27,6 +27,7 @@ struct Window {
 
     glfwSetKeyCallback(window, keyCallback);
     glfwSetScrollCallback(window, scrollCallback);
+    glfwSetFramebufferSizeCallback(window, resizeCallback);
 
     // Make the current context active
     glfwMakeContextCurrent(window);
