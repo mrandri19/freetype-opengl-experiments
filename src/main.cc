@@ -82,8 +82,6 @@ struct State {
   size_t visible_lines;
 } state;
 
-bool paused;
-
 void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
                  int mods UNUSED) {
   if ((key == GLFW_KEY_DOWN || key == GLFW_KEY_J) &&
@@ -100,10 +98,6 @@ void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
   }
   if ((key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, true);
-    paused = false;
-  }
-  if ((key == GLFW_KEY_N) && action == GLFW_PRESS) {
-    paused = false;
   }
 }
 
@@ -390,11 +384,12 @@ void RenderLine(
     // TODO(andrea): instead of allocating on each line, allocate externally and
     // eventually resize here
     vector<array<array<GLfloat, 4>, 6>> quads;
-    quads.reserve(characters.size());
+    quads.resize(characters.size());
     vector<array<GLuint, 2>> texture_ids;
-    texture_ids.reserve(characters.size() * 6);
+    texture_ids.resize(characters.size() * 6);
 
-    for (texture_atlas::Character &ch : characters) {
+    for (size_t k = 0; k < characters.size(); ++k) {
+      texture_atlas::Character &ch = characters[k];
       // Calculate the character position
       GLfloat w, h;
       GLfloat xpos, ypos;
@@ -448,13 +443,10 @@ void RenderLine(
           static_cast<GLuint>(ch.texture_array_index),
           static_cast<GLuint>(ch.colored)};
 
-      quads.push_back(quad);
-      texture_ids.push_back(texture_id);
-      texture_ids.push_back(texture_id);
-      texture_ids.push_back(texture_id);
-      texture_ids.push_back(texture_id);
-      texture_ids.push_back(texture_id);
-      texture_ids.push_back(texture_id);
+      quads[k] = quad;
+      texture_ids[k * 6 + 0] = texture_ids[k * 6 + 1] = texture_ids[k * 6 + 2] =
+          texture_ids[k * 6 + 3] = texture_ids[k * 6 + 4] =
+              texture_ids[k * 6 + 5] = texture_id;
     }
 
     assert(6 * quads.size() == texture_ids.size());
@@ -487,7 +479,7 @@ void RenderLine(
       GLsizeiptr texture_ids_byte_size =
           texture_ids.size() * (sizeof(texture_ids[0]));
       glBufferSubData(GL_ARRAY_BUFFER, offset, texture_ids_byte_size,
-                      &texture_ids[0]);
+                      texture_ids.data());
 
       // Tell shader that layout=0 is a vec4 starting at offset 0
       glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat),
@@ -658,12 +650,7 @@ int main(int argc UNUSED, char **argv) {
     // Swap buffers when drawing is finished
     glfwSwapBuffers(window.window);
 
-    paused = true;
-
-    // while (true) {
     glfwWaitEvents();
-    // if (!paused) break;
-    // }
   }
 
   for (auto &face : faces) {
