@@ -11,13 +11,15 @@ find_library(harfbuzz REQUIRED)
 
 include_directories(/usr/include/freetype2)
 include_directories(/usr/include/libpng16)
-include_directories(lib/glad/include)
+include_directories(SYSTEM lib/glad/include)
 
 add_executable(opengl
   src/main.cc
   src/texture_atlas.cc
   lib/glad/src/glad.c
 )
+
+set_source_files_properties(lib/glad/src/glad.c PROPERTIES COMPILE_FLAGS -Wno-error -Wno-all -Wno-extra)
 
 target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
