@@ -18,10 +18,14 @@ add_executable(opengl
   src/texture_atlas.cc
   src/state.cc
   src/util.cc
+  src/renderer.cc
+  src/face_collection.cc
   lib/glad/src/glad.c
 )
 
 set_source_files_properties(lib/glad/src/glad.c PROPERTIES COMPILE_FLAGS -Wno-error -Wno-all -Wno-extra)
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g -fcolor-diagnostics)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
