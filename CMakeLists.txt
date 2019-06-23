@@ -16,12 +16,14 @@ include_directories(SYSTEM lib/glad/include)
 add_executable(opengl
   src/main.cc
   src/texture_atlas.cc
+  src/state.cc
+  src/util.cc
   lib/glad/src/glad.c
 )
 
 set_source_files_properties(lib/glad/src/glad.c PROPERTIES COMPILE_FLAGS -Wno-error -Wno-all -Wno-extra)
 
-target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
+target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g -fcolor-diagnostics)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
 
 
@@ -45,4 +47,3 @@ set_target_properties(
 
 # If enabled, generates a compile_commands.json, used by clang-tidy
 set(CMAKE_EXPORT_COMPILE_COMMANDS)
-

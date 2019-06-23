@@ -6,9 +6,12 @@
 #include <GLFW/glfw3.h>
 
 #include <string>
+
+namespace window {
 using std::string;
 
-struct Window {
+class Window {
+ public:
   GLFWwindow* window;
 
   Window(int width, int height, const string& title, GLFWkeyfun keyCallback,
@@ -47,4 +50,5 @@ struct Window {
   Window& operator=(const Window&) = delete;
 };
 
+}  // namespace window
 #endif  // SRC_WINDOW_H_

@@ -21,24 +21,24 @@
 // HarfBuzz FreeTpe
 #include <harfbuzz/hb-ft.h>
 
-#include <chrono>
-#include <ctime>
 #include <fstream>
-#include <ratio>
 #include <unordered_map>
 #include <vector>
 
 // glm - OpenGL mathematics
-#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/mat4x4.hpp>
 
+#include "./callbacks.h"
 #include "./shader.h"
+#include "./state.h"
 #include "./texture_atlas.h"
 #include "./util.h"
 #include "./window.h"
 
-namespace font_renderer {
+namespace lettera {
+using state::State;
 using std::array;
 using std::get;
 using std::make_pair;
@@ -49,14 +49,17 @@ using std::string;
 using std::tuple;
 using std::unordered_map;
 using std::vector;
+using texture_atlas::Character;
 using texture_atlas::TextureAtlas;
+using window::Window;
 
-static const int kInitialWindowWidth = 1024;
-static const int kInitialWindowHeight = 768;
-static const int kFontPixelHeight = 17;
-static const int kFontPixelWidth = kFontPixelHeight - 1;
+static const unsigned int kInitialLine = 0;
+static const unsigned int kInitialWindowWidth = 1024;
+static const unsigned int kInitialWindowHeight = 768;
+static const unsigned int kFontPixelHeight = 17;
+static const unsigned int kFontPixelWidth = kFontPixelHeight - 1;
 static const float kFontZoom = 1;
-static const int kLineHeight =
+static const unsigned int kLineHeight =
     static_cast<int>(kFontPixelHeight * 1.35);  // Copied from VSCode's code
 static const char kWindowTitle[] = "OpenGL";
 
@@ -68,87 +71,6 @@ const hb_codepoint_t CODEPOINT_MISSING_FACE = UINT32_MAX;
 const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
 
 GLuint VAO, VBO;
-
-typedef struct {
-  GLuint shader_program_id;
-  const vector<string> *lines;
-} glfw_user_pointer_t;
-
-struct State {
-  size_t width;
-  size_t height;
-
-  size_t line_height;
-
-  size_t lines_count;
-
-  ssize_t start_line;  // must be signed to avoid underflow when subtracting 1
-                       // to check if we can go up
-  size_t visible_lines;
-
-  void update(const vector<string> &lines) {
-    lines_count = lines.size();
-    start_line = 0;
-    visible_lines =
-        min(lines_count, static_cast<size_t>(ceil(height / line_height)));
-  }
-} state;
-
-void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
-                 int mods UNUSED) {
-  if ((key == GLFW_KEY_DOWN || key == GLFW_KEY_J) &&
-      (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-    if ((state.start_line + state.visible_lines + 1) <= state.lines_count) {
-      state.start_line++;
-    }
-  }
-  if ((key == GLFW_KEY_UP || key == GLFW_KEY_K) &&
-      (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-    if ((state.start_line - 1) >= 0) {
-      state.start_line--;
-    }
-  }
-  if ((key == GLFW_KEY_ESCAPE || key == GLFW_KEY_Q) && action == GLFW_PRESS) {
-    glfwSetWindowShouldClose(window, true);
-  }
-
-  if ((key == GLFW_KEY_HOME) && action == GLFW_PRESS) {
-    state.start_line = 0;
-  }
-  if ((key == GLFW_KEY_END) && action == GLFW_PRESS) {
-    state.start_line = state.lines_count - state.visible_lines;
-  }
-}
-
-void ScrollCallback(GLFWwindow *window UNUSED, double xoffset UNUSED,
-                    double yoffset) {
-  int lines_to_scroll = yoffset;
-  if (yoffset > 0) {  // going up
-    if ((state.start_line - lines_to_scroll) >= 0) {
-      state.start_line -= lines_to_scroll;
-    }
-  } else {  // going down
-    lines_to_scroll = -lines_to_scroll;
-    if ((state.start_line + state.visible_lines + lines_to_scroll) <=
-        state.lines_count) {
-      state.start_line += lines_to_scroll;
-    }
-  }
-}
-
-void ResizeCallback(GLFWwindow *window UNUSED, int width, int height) {
-  glfw_user_pointer_t *obj =
-      static_cast<glfw_user_pointer_t *>(glfwGetWindowUserPointer(window));
-  glViewport(0, 0, width, height);
-  glm::mat4 projection = glm::ortho(0.0f, static_cast<GLfloat>(width), 0.0f,
-                                    static_cast<GLfloat>(height));
-  glUniformMatrix4fv(glGetUniformLocation(obj->shader_program_id, "projection"),
-                     1, GL_FALSE, glm::value_ptr(projection));
-
-  state.width = width;
-  state.height = height;
-  state.update(*obj->lines);
-}
 
 vector<tuple<FT_Face, GLsizei, GLsizei>> LoadFaces(
     FT_Library ft, const vector<string> &face_names) {
@@ -173,8 +95,8 @@ vector<tuple<FT_Face, GLsizei, GLsizei>> LoadFaces(
       }
     }
 
-    // The face's size and bbox are populated only after set pixel sizes/select
-    // size have been called
+    // The face's size and bbox are populated only after set pixel
+    // sizes/select size have been called
     GLsizei width, height;
     if (FT_IS_SCALABLE(face)) {
       width = FT_MulFix(face->bbox.xMax - face->bbox.xMin,
@@ -194,11 +116,11 @@ vector<tuple<FT_Face, GLsizei, GLsizei>> LoadFaces(
 }
 
 void AssignCodepointsFaces(
-    string text, vector<tuple<FT_Face, GLsizei, GLsizei>> faces,
+    const string &text, const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces,
     pair<vector<size_t>, vector<hb_codepoint_t>> *codepoint_faces_pair,
     hb_buffer_t *buf) {
-  // Flag to break the for loop when all of the codepoints have been assigned to
-  // a face
+  // Flag to break the for loop when all of the codepoints have been assigned
+  // to a face
   bool all_codepoints_have_a_face = true;
   for (size_t i = 0; (i < faces.size()) && all_codepoints_have_a_face; i++) {
     all_codepoints_have_a_face = false;
@@ -237,8 +159,8 @@ void AssignCodepointsFaces(
     // assert(glyph_info_length == glyph_position_length);
 
     // Assign a size to the vector on the first iteration and fill it with
-    // UINT32_MAX which represents the absence of a value This assumes that all
-    // of the face runs will have the same lengths
+    // UINT32_MAX which represents the absence of a value This assumes that
+    // all of the face runs will have the same lengths
     if (i == 0) {
       codepoint_faces_pair->first.resize(glyph_info_length,
                                          CODEPOINT_MISSING_FACE);
@@ -263,8 +185,8 @@ void AssignCodepointsFaces(
       }
 
       // If we find a glyph which is not present in this face (therefore its
-      // codepoint it's 0) and which has not been assigned already then we need
-      // to iterate on the next font
+      // codepoint it's 0) and which has not been assigned already then we
+      // need to iterate on the next font
       if (codepoint == 0 &&
           (codepoint_faces_pair->second)[j] == CODEPOINT_MISSING) {
         all_codepoints_have_a_face = true;
@@ -300,8 +222,8 @@ void InitOpenGL() {
   glDebugMessageCallback(util::GLDebugMessageCallback, nullptr);
 }
 
-pair<texture_atlas::Character, vector<unsigned char>> RenderGlyph(
-    FT_Face face, hb_codepoint_t codepoint) {
+pair<Character, vector<unsigned char>> RenderGlyph(FT_Face face,
+                                                   hb_codepoint_t codepoint) {
   FT_Int32 flags = FT_LOAD_DEFAULT | FT_LOAD_TARGET_LCD;
 
   if (FT_HAS_COLOR(face)) {
@@ -356,7 +278,7 @@ pair<texture_atlas::Character, vector<unsigned char>> RenderGlyph(
     texture_height = face->glyph->bitmap.rows;
   }
 
-  texture_atlas::Character ch;
+  Character ch;
   ch.size = glm::ivec2(texture_width, texture_height);
   ch.bearing = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top);
   ch.advance = static_cast<GLuint>(face->glyph->advance.x);
@@ -377,12 +299,12 @@ void RenderLine(
 
   // While I haven't rendered all codepoints
   while (i < codepoints_in_line) {
-    vector<texture_atlas::Character> characters;
+    vector<Character> characters;
 
     for (; i < codepoints_in_line; ++i) {
       hb_codepoint_t codepoint = codepoints_face_pair.second[i];
 
-      texture_atlas::Character *ch = texture_atlases[0]->Get(codepoint);
+      Character *ch = texture_atlases[0]->Get(codepoint);
       if (ch != nullptr) {
         characters.push_back(*ch);
         continue;
@@ -414,15 +336,15 @@ void RenderLine(
       }
     }
 
-    // TODO(andrea): instead of allocating on each line, allocate externally and
-    // eventually resize here
+    // TODO(andrea): instead of allocating on each line, allocate externally
+    // and eventually resize here
     vector<array<array<GLfloat, 4>, 6>> quads;
     quads.resize(characters.size());
     vector<array<GLuint, 2>> texture_ids;
     texture_ids.resize(characters.size() * 6);
 
     for (size_t k = 0; k < characters.size(); ++k) {
-      texture_atlas::Character &ch = characters[k];
+      Character &ch = characters[k];
       // Calculate the character position
       GLfloat w, h;
       GLfloat xpos, ypos;
@@ -543,7 +465,7 @@ void Render(const Shader &shader, const vector<string> &lines,
             const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces,
             unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
                 *shaping_cache,
-            const vector<TextureAtlas *> &texture_atlases) {
+            const vector<TextureAtlas *> &texture_atlases, const State &state) {
   // Set background color
   glClearColor(BACKGROUND_COLOR);
   glClear(GL_COLOR_BUFFER_BIT);
@@ -551,9 +473,14 @@ void Render(const Shader &shader, const vector<string> &lines,
   // Create the shaping buffer
   hb_buffer_t *buf = hb_buffer_create();
 
+  unsigned int last_line;
+  if (state.GetVisibleLines() > lines.size()) {
+    last_line = state.GetStartLine() + lines.size();
+  } else {
+    last_line = state.GetStartLine() + state.GetVisibleLines();
+  }
   // For each visible line
-  for (size_t i = state.start_line;
-       i < (state.visible_lines + state.start_line); i++) {
+  for (unsigned int i = state.GetStartLine(); i < last_line; i++) {
     auto &line = lines[i];
 
     // Get from the cache which codepoints and faces to render the line with.
@@ -568,8 +495,8 @@ void Render(const Shader &shader, const vector<string> &lines,
     }
 
     auto x = 0;
-    auto y = state.height -
-             (state.line_height * kFontZoom * ((i - state.start_line) + 1));
+    auto y = state.GetHeight() - (state.GetLineHeight() * kFontZoom *
+                                  ((i - state.GetStartLine()) + 1));
 
     // Render the line to the screen, given the faces, the codepoints, the
     // codepoint's textures and a texture atlas
@@ -583,7 +510,10 @@ void Render(const Shader &shader, const vector<string> &lines,
 
 int main(int argc UNUSED, char **argv) {
   Window window(kInitialWindowWidth, kInitialWindowHeight, kWindowTitle,
-                KeyCallback, ScrollCallback, ResizeCallback);
+                callbacks::KeyCallback, callbacks::ScrollCallback,
+                callbacks::ResizeCallback);
+  State state(kInitialWindowWidth, kInitialWindowHeight, kLineHeight,
+              kInitialLine);
 
   InitOpenGL();
 
@@ -591,10 +521,11 @@ int main(int argc UNUSED, char **argv) {
   Shader shader("src/shaders/text.vert", "src/shaders/text.frag");
   shader.use();
 
-  glfw_user_pointer_t glfw_user_pointer;
+  callbacks::glfw_user_pointer_t glfw_user_pointer;
   glfwSetWindowUserPointer(window.window, &glfw_user_pointer);
 
   glfw_user_pointer.shader_program_id = shader.programId;
+  glfw_user_pointer.state = &state;
 
   // https://stackoverflow.com/questions/48491340/use-rgb-texture-as-alpha-values-subpixel-font-rendering-in-opengl
   // TODO(andrea): understand WHY it works, and if this is an actual solution,
@@ -605,8 +536,8 @@ int main(int argc UNUSED, char **argv) {
   // Set the viewport
   glViewport(0, 0, kInitialWindowWidth, kInitialWindowHeight);
 
-  // Disable byte-alignment restriction (our textures' size is not a multiple of
-  // 4)
+  // Disable byte-alignment restriction (our textures' size is not a multiple
+  // of 4)
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
   // Init Vertex Array Object (VAO)
@@ -662,29 +593,20 @@ int main(int argc UNUSED, char **argv) {
   texture_atlases.push_back(&monochrome_texture_atlas);
   texture_atlases.push_back(&colored_texture_atlas);
 
-  // TODO(andrea): handle changing viewport
-  // Render only the lines visible in the viewport
-  state.width = kInitialWindowWidth;
-  state.height = kInitialWindowHeight;
-  state.line_height = kLineHeight;
-  state.update(lines);
-
   // TODO(andrea): invalidation and capacity logic (LRU?, Better Hashmap?)
   unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
-      shaping_cache(state.lines_count);
+      shaping_cache(state.GetVisibleLines());
 
   while (!glfwWindowShouldClose(window.window)) {
     glfwWaitEvents();
 
-    auto t1 = std::chrono::high_resolution_clock::now();
+    auto t1 = glfwGetTime();
 
-    Render(shader, lines, faces, &shaping_cache, texture_atlases);
+    Render(shader, lines, faces, &shaping_cache, texture_atlases, state);
 
-    auto t2 = std::chrono::high_resolution_clock::now();
-    auto time_span =
-        std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
-    printf("Rendering lines took %f ms (%3.0f fps/Hz)\n",
-           time_span.count() * 1000, 1.f / time_span.count());
+    auto t2 = glfwGetTime();
+    printf("Rendering lines took %f ms (%3.0f fps/Hz)\n", (t2 - t1) * 1000,
+           1.f / (t2 - t1));
 
     // Swap buffers when drawing is finished
     glfwSwapBuffers(window.window);
@@ -698,7 +620,7 @@ int main(int argc UNUSED, char **argv) {
 
   return 0;
 }
-}  // namespace font_renderer
+}  // namespace lettera
 
 int main(int argc, char **argv) {
   if (argc != 2) {
@@ -706,7 +628,7 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
-  font_renderer::main(argc, argv);
+  lettera::main(argc, argv);
 
   return 0;
 }

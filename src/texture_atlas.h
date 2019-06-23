@@ -12,10 +12,6 @@
 
 #include <glad/glad.h>
 
-#include <algorithm>
-#include <cstdio>
-#include <memory>
-#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,7 +22,6 @@ namespace texture_atlas {
 using std::pair;
 using std::unordered_map;
 using std::vector;
-
 
 struct Character {
   size_t texture_array_index;
