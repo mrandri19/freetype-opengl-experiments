@@ -576,8 +576,8 @@ int main(int argc UNUSED, char **argv) {
   }
   glfw_user_pointer.lines = &lines;
 
-  vector<string> face_names{"./FiraCode-Retina.ttf", "./NotoColorEmoji.ttf"};
-  // vector<string> face_names{"./UbuntuMono.ttf", "./NotoColorEmoji.ttf"};
+  vector<string> face_names{"./assets/fonts/FiraCode-Retina.ttf",
+                            "./assets/fonts/NotoColorEmoji.ttf"};
 
   vector<tuple<FT_Face, GLsizei, GLsizei>> faces = LoadFaces(ft, face_names);
 

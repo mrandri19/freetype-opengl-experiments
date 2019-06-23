@@ -1,5 +1,6 @@
-#ifndef SRC_CALLBACKS_H
-#define SRC_CALLBACKS_H
+// Copyright 2019 <Andrea Cognolato>
+#ifndef SRC_CALLBACKS_H_
+#define SRC_CALLBACKS_H_
 
 #include <glad/glad.h>
 
@@ -93,4 +94,4 @@ void ResizeCallback(GLFWwindow *window, int width, int height) {
 
 }  // namespace callbacks
 
-#endif  // SRC_CALLBACKS_H
+#endif  // SRC_CALLBACKS_H_

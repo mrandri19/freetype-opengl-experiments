@@ -25,6 +25,6 @@ void State::GoUp(unsigned int amount) { start_line_ += amount; }
 void State::GotoBeginning() { start_line_ = 0; }
 void State::GotoEnd(unsigned int lines_count) {
   start_line_ = lines_count - visible_lines_;
-};
+}
 
 }  // namespace state
