@@ -52,6 +52,10 @@ using std::vector;
 using texture_atlas::Character;
 using texture_atlas::TextureAtlas;
 using window::Window;
+using CodePointsFacePair = pair<vector<size_t>, vector<hb_codepoint_t>>;
+using ShapingCache = unordered_map<string, CodePointsFacePair>;
+using SizedFace = tuple<FT_Face, GLsizei, GLsizei>;
+using FaceCollection = vector<SizedFace>;
 
 static const unsigned int kInitialLine = 0;
 static const unsigned int kInitialWindowWidth = 1024;
@@ -72,9 +76,8 @@ const hb_codepoint_t CODEPOINT_MISSING = UINT32_MAX;
 
 GLuint VAO, VBO;
 
-vector<tuple<FT_Face, GLsizei, GLsizei>> LoadFaces(
-    FT_Library ft, const vector<string> &face_names) {
-  vector<tuple<FT_Face, GLsizei, GLsizei>> faces;
+FaceCollection LoadFaces(FT_Library ft, const vector<string> &face_names) {
+  FaceCollection faces;
 
   for (auto &face_name : face_names) {
     FT_Face face;
@@ -115,10 +118,9 @@ vector<tuple<FT_Face, GLsizei, GLsizei>> LoadFaces(
   return faces;
 }
 
-void AssignCodepointsFaces(
-    const string &text, const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces,
-    pair<vector<size_t>, vector<hb_codepoint_t>> *codepoint_faces_pair,
-    hb_buffer_t *buf) {
+void AssignCodepointsFaces(const string &text, const FaceCollection &faces,
+                           CodePointsFacePair *codepoint_faces_pair,
+                           hb_buffer_t *buf) {
   // Flag to break the for loop when all of the codepoints have been assigned
   // to a face
   bool all_codepoints_have_a_face = true;
@@ -287,11 +289,10 @@ pair<Character, vector<unsigned char>> RenderGlyph(FT_Face face,
   return make_pair(ch, bitmap_buffer);
 }
 
-void RenderLine(
-    const pair<vector<size_t>, vector<hb_codepoint_t>> &codepoints_face_pair,
-    const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces, GLfloat x, GLfloat y,
-    GLfloat scale, const Shader &shader,
-    const vector<TextureAtlas *> &texture_atlases) {
+void RenderLine(const CodePointsFacePair &codepoints_face_pair,
+                const FaceCollection &faces, GLfloat x, GLfloat y,
+                GLfloat scale, const Shader &shader,
+                const vector<TextureAtlas *> &texture_atlases) {
   glBindVertexArray(VAO);
 
   size_t codepoints_in_line = codepoints_face_pair.first.size();
@@ -462,9 +463,7 @@ void RenderLine(
 }
 
 void Render(const Shader &shader, const vector<string> &lines,
-            const vector<tuple<FT_Face, GLsizei, GLsizei>> &faces,
-            unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
-                *shaping_cache,
+            const FaceCollection &faces, ShapingCache *shaping_cache,
             const vector<TextureAtlas *> &texture_atlases, const State &state) {
   // Set background color
   glClearColor(BACKGROUND_COLOR);
@@ -486,7 +485,7 @@ void Render(const Shader &shader, const vector<string> &lines,
     // Get from the cache which codepoints and faces to render the line with.
     // On miss, calculate and cache them
     auto it = shaping_cache->find(line);
-    pair<vector<size_t>, vector<hb_codepoint_t>> codepoints_face_pair;
+    CodePointsFacePair codepoints_face_pair;
     if (it == shaping_cache->end()) {
       AssignCodepointsFaces(line, faces, &codepoints_face_pair, buf);
       (*shaping_cache)[line] = codepoints_face_pair;
@@ -541,14 +540,13 @@ int main(int argc UNUSED, char **argv) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
   // Init Vertex Array Object (VAO)
-  {
-    glGenVertexArrays(1, &VAO);
-    glBindVertexArray(VAO);
-    // Init Vertex Buffer Object (VBO)
-    glGenBuffers(1, &VBO);
-    glBindVertexArray(0);
-  }
+  glGenVertexArrays(1, &VAO);
+  glBindVertexArray(VAO);
+  // Init Vertex Buffer Object (VBO)
+  glGenBuffers(1, &VBO);
+  glBindVertexArray(0);
 
+  // Init projection matrix
   glm::mat4 projection =
       glm::ortho(0.0f, static_cast<GLfloat>(kInitialWindowWidth), 0.0f,
                  static_cast<GLfloat>(kInitialWindowHeight));
@@ -565,6 +563,7 @@ int main(int argc UNUSED, char **argv) {
   // Set which filter to use for the LCD Subpixel Antialiasing
   FT_Library_SetLcdFilter(ft, FT_LCD_FILTER_DEFAULT);
 
+  // Read the file
   vector<string> lines;
   {
     std::ifstream file(argv[1]);
@@ -576,26 +575,25 @@ int main(int argc UNUSED, char **argv) {
   }
   glfw_user_pointer.lines = &lines;
 
+  // Load the fonts
+  // TODO(andrea): make this support multiple fonts
   vector<string> face_names{"./assets/fonts/FiraCode-Retina.ttf",
                             "./assets/fonts/NotoColorEmoji.ttf"};
-
-  vector<tuple<FT_Face, GLsizei, GLsizei>> faces = LoadFaces(ft, face_names);
-
-  // TODO(andrea): make this support multiple fonts
+  FaceCollection faces = LoadFaces(ft, face_names);
+  // And the texture atlases
   TextureAtlas monochrome_texture_atlas(
       get<1>(faces[0]), get<2>(faces[0]), shader.programId,
       "monochromatic_texture_array", GL_RGB8, GL_RGB, 0);
   TextureAtlas colored_texture_atlas(get<1>(faces[1]), get<2>(faces[1]),
                                      shader.programId, "colored_texture_array",
                                      GL_RGBA8, GL_BGRA, 1);
-
   vector<TextureAtlas *> texture_atlases;
   texture_atlases.push_back(&monochrome_texture_atlas);
   texture_atlases.push_back(&colored_texture_atlas);
 
   // TODO(andrea): invalidation and capacity logic (LRU?, Better Hashmap?)
-  unordered_map<string, pair<vector<size_t>, vector<hb_codepoint_t>>>
-      shaping_cache(state.GetVisibleLines());
+  // Init Shaping cache
+  ShapingCache shaping_cache(state.GetVisibleLines());
 
   while (!glfwWindowShouldClose(window.window)) {
     glfwWaitEvents();
