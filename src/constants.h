@@ -1,3 +1,4 @@
+// Copyright 2019 <Andrea Cognolato>
 #ifndef SRC_CONSTANTS_H_
 #define SRC_CONSTANTS_H_
 

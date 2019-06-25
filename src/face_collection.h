@@ -1,3 +1,4 @@
+// Copyright 2019 <Andrea Cognolato>
 #ifndef SRC_FACE_COLLECTION_H_
 #define SRC_FACE_COLLECTION_H_
 
@@ -12,6 +13,7 @@
 
 #include <cassert>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "./constants.h"
@@ -34,6 +36,6 @@ void AssignCodepointsFaces(const string &text, const FaceCollection &faces,
                            CodePointsFacePair *codepoint_faces_pair,
                            hb_buffer_t *buf);
 
-} // namespace face_collection
+}  // namespace face_collection
 
-#endif // SRC_FACE_COLLECTION_H_
+#endif  // SRC_FACE_COLLECTION_H_

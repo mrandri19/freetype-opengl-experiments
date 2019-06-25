@@ -1,3 +1,4 @@
+// Copyright 2019 <Andrea Cognolato>
 #include "./face_collection.h"
 
 namespace face_collection {
@@ -138,4 +139,4 @@ void AssignCodepointsFaces(const string &text, const FaceCollection &faces,
     }
   }
 }
-} // namespace face_collection
+}  // namespace face_collection

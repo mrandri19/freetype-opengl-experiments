@@ -1,9 +1,8 @@
+// Copyright 2019 <Andrea Cognolato>
 #include "./renderer.h"
 #include "./constants.h"
 
 namespace renderer {
-
-using face_collection::AssignCodepointsFaces;
 void Render(const Shader &shader, const vector<string> &lines,
             const FaceCollection &faces, ShapingCache *shaping_cache,
             const vector<TextureAtlas *> &texture_atlases, const State &state,
@@ -287,4 +286,4 @@ pair<Character, vector<unsigned char>> RenderGlyph(FT_Face face,
   return make_pair(ch, bitmap_buffer);
 }
 
-} // namespace renderer
+}  // namespace renderer

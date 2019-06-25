@@ -41,6 +41,7 @@ void KeyCallback(GLFWwindow *window, int key, int scancode UNUSED, int action,
   }
   if ((key == GLFW_KEY_UP || key == GLFW_KEY_K) &&
       (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+    // TODO(andrea): move this logic into the state instead
     if ((state->GetStartLine() - 1) >= 0) {
       state->GoDown(1);
     }

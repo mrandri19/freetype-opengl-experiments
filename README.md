@@ -14,6 +14,12 @@ cd ..
 ninja -C build && ./build/opengl
 ```
 
+### Cpplint
+
+```shell
+cpplint --filter=-build/include --quiet src/**
+```
+
 ## Screenshots
 
 The first text rendered with LCD Subpixel rendering.

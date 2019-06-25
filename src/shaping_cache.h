@@ -1,3 +1,4 @@
+// Copyright 2019 <Andrea Cognolato>
 #ifndef SRC_SHAPING_CACHE_H_
 #define SRC_SHAPING_CACHE_H_
 
