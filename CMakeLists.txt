@@ -27,7 +27,7 @@ set_source_files_properties(lib/glad/src/glad.c PROPERTIES COMPILE_FLAGS -Wno-er
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
-target_compile_options(opengl PUBLIC -Werror -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
+target_compile_options(opengl PUBLIC -Wall -Wextra -Wshadow -Wnon-virtual-dtor -pedantic -g)
 target_link_libraries(opengl glfw X11 dl freetype pthread harfbuzz)
 
 
