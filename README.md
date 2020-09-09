@@ -2,22 +2,21 @@
 
 ## Development
 
+NOTE: These steps are copied from [the worflow file](https://github.com/mrandri19/freetype-opengl-experiments/blob/master/.github/workflows/cmake.yml)
+which is the most up-to-date source on how to build the project.
+
 ```shell
 git clone https://github.com/mrandri19/freetype-opengl-experiments
-
 cd freetype-opengl-experiments
 
-mkdir build
+sudo apt-get update
+sudo apt-get install libglfw3-dev libglm-dev
+
+cmake -E make_directory build
 
 cd build
-
-cmake -G Ninja .. 
-
-cd ..
-
-ninja -C build
-
-./build/opengl README.md
+cmake .. -DCMAKE_BUILD_TYPE=Debug
+cmake --build . --config Debug 
 ```
 
 ## Screenshots
