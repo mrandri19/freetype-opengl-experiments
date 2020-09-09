@@ -108,7 +108,6 @@ void GLDebugMessageCallback(GLenum source, GLenum type, GLuint id,
 
   printf("%d: %s of %s severity, raised from %s: %s\n", id, _type.c_str(),
          _severity.c_str(), _source.c_str(), msg);
-  if (_severity == "HIGH" || _severity == "MEDIUM") assert(false);
 }
 
 }  // namespace util
