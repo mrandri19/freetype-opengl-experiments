@@ -1,23 +1,21 @@
 ## Development
 
 ```shell
-# Create the build directory
+git clone https://github.com/mrandri19/freetype-opengl-experiments
+
+cd freetype-opengl-experiments
+
 mkdir build
-# Enter it
+
 cd build
-# Create the ninja build files using the ST2 Ninja template, feel free to use
-# the regular build.ninja template
-cmake -G "Sublime Text 2 - Ninja" ..
-# Go back to the project root
+
+cmake -G Ninja .. 
+
 cd ..
-# Build the project and run it
-ninja -C build && ./build/opengl
-```
 
-### Cpplint
+ninja -C build
 
-```shell
-cpplint --filter=-build/include --quiet src/**
+./build/opengl README.md
 ```
 
 ## Screenshots
