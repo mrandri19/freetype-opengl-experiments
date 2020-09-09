@@ -1,3 +1,5 @@
+![Build status badge](https://github.com/mrandri19/freetype-opengl-experiments/workflows/CMake/badge.svg)
+
 ## Development
 
 ```shell
